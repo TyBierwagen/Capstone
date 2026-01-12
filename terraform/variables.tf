@@ -1,0 +1,67 @@
+variable "project_name" {
+  description = "Name of the project, used for resource naming"
+  type        = string
+  default     = "soilrobot"
+  
+  validation {
+    condition     = length(var.project_name) <= 10 && can(regex("^[a-z0-9]+$", var.project_name))
+    error_message = "Project name must be lowercase alphanumeric and max 10 characters for resource naming constraints."
+  }
+}
+
+variable "environment" {
+  description = "Environment name (dev, staging, prod)"
+  type        = string
+  default     = "dev"
+  
+  validation {
+    condition     = contains(["dev", "staging", "prod"], var.environment)
+    error_message = "Environment must be dev, staging, or prod."
+  }
+}
+
+variable "location" {
+  description = "Azure region for resources"
+  type        = string
+  default     = "eastus"
+}
+
+variable "sql_admin_username" {
+  description = "Administrator username for SQL Server"
+  type        = string
+  default     = "sqladmin"
+  sensitive   = true
+}
+
+variable "sql_admin_password" {
+  description = "Administrator password for SQL Server"
+  type        = string
+  sensitive   = true
+  
+  validation {
+    condition     = length(var.sql_admin_password) >= 8
+    error_message = "SQL admin password must be at least 8 characters long."
+  }
+}
+
+variable "publisher_name" {
+  description = "Publisher name for API Management"
+  type        = string
+  default     = "Soil Robot Team"
+}
+
+variable "publisher_email" {
+  description = "Publisher email for API Management"
+  type        = string
+  default     = "admin@soilrobot.local"
+}
+
+variable "tags" {
+  description = "Tags to apply to all resources"
+  type        = map(string)
+  default = {
+    Project     = "Soil Sensing Robot"
+    ManagedBy   = "Terraform"
+    Environment = "Development"
+  }
+}
