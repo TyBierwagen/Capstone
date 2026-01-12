@@ -1,0 +1,17 @@
+# Example Terraform variables
+# Copy this file to terraform.tfvars and update with your values
+
+project_name     = "soilrobot"
+environment      = "dev"
+location         = "eastus"
+sql_admin_username = "sqladmin"
+sql_admin_password = "ChangeMe123!@#"  # IMPORTANT: Use a strong password in production
+
+publisher_name  = "Soil Robot Team"
+publisher_email = "admin@example.com"
+
+tags = {
+  Project     = "Soil Sensing Robot"
+  ManagedBy   = "Terraform"
+  Environment = "Development"
+}
