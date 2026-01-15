@@ -153,6 +153,12 @@ function formatTimestamp(value) {
   if (!value) {
     return '--';
   }
+  
+  // If the value is a number (like the microcontroller's milliseconds), treat it as a relative time from now
+  if (typeof value === 'number') {
+    return new Date().toLocaleString() + ' (Device uptime: ' + (value/1000).toFixed(0) + 's)';
+  }
+
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
