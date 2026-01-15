@@ -15,7 +15,7 @@ output "static_website_url" {
 
 output "cdn_endpoint_url" {
   description = "CDN endpoint URL for the static website"
-  value       = "https://${azurerm_cdn_endpoint.main.fqdn}"
+  value       = azurerm_storage_account.main.primary_web_endpoint
 }
 
 output "function_app_name" {
@@ -26,17 +26,6 @@ output "function_app_name" {
 output "function_app_url" {
   description = "URL of the Azure Function App"
   value       = "https://${azurerm_linux_function_app.main.default_hostname}"
-}
-
-output "sql_server_fqdn" {
-  description = "Fully qualified domain name of the SQL Server"
-  value       = azurerm_mssql_server.main.fully_qualified_domain_name
-  sensitive   = true
-}
-
-output "sql_database_name" {
-  description = "Name of the SQL Database"
-  value       = azurerm_mssql_database.main.name
 }
 
 output "api_management_gateway_url" {
