@@ -355,7 +355,7 @@
             <span id="deviceLastSeen">--</span>
           </li>
         </ul>
-        <p style="margin-top: 12px; font-size: 13px; color:#cbd5f5;">Data surfaces directly from SQLite via the API gateway. Use the log below for live telemetry.</p>
+        <p style="margin-top: 12px; font-size: 13px; color:#cbd5f5;">Data surfaces directly from Azure Functions. Use the log below for live telemetry.</p>
       </div>
     </div>
 
@@ -375,18 +375,13 @@
         <h2>Data Pipeline</h2>
         <ul class="pipeline-list">
           <li>ESP32 posts readings to <strong>POST /sensor-data</strong></li>
-          <li>Azure Functions persists the row to SQLite and joins metadata</li>
+          <li>Azure Functions persists the row and joins metadata</li>
           <li>UI fetches <strong>GET /sensor-data?deviceIp=...</strong> to read the latest entry</li>
-          <li>Adjust <code>window.API_GATEWAY_BASE_URL</code> before deploying the static site</li>
         </ul>
-        <pre style="margin-top: 14px; background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; overflow-x:auto;">window.API_GATEWAY_BASE_URL = 'https://your-api-gateway-url/api';</pre>
       </div>
     </div>
   </div>
 
-  <script>
-    window.API_GATEWAY_BASE_URL = window.API_GATEWAY_BASE_URL || '/api';
-  </script>
   <script src="app.js"></script>
 </body>
 </html>

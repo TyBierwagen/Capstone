@@ -1,4 +1,4 @@
-const API_BASE_URL = window.API_GATEWAY_BASE_URL || '/api';
+const API_BASE_URL = 'https://soilrobot-func-dev.azurewebsites.net/api';
 
 const state = {
   isConnected: false,
