@@ -48,3 +48,7 @@ output "key_vault_uri" {
   description = "URI of the Key Vault"
   value       = azurerm_key_vault.main.vault_uri
 }
+
+output "static_web_app_url" {
+  value = azurerm_static_web_app.main.default_host_name
+}
