@@ -248,6 +248,12 @@ Typical power usage:
 3. **Test API communication**: Check backend receives data
 4. **Test end-to-end**: Use web interface to start/stop sampling
 
+## Backend Connectivity
+
+- MCU samples send their latest readings to `POST /api/sensor-data` when `isRunning` is true. The payload now includes `deviceId`, `deviceIp`, and `commandStatus`, which allows the web UI to show live values.
+- Every 5 seconds the board polls `GET /api/control?deviceIp=<your-ip>&consume=true` so commands issued from the website (`start`, `stop`, future modes) propagate immediately. If no command is queued the endpoint replies with `command: null`.
+- Ensure `apiEndpoint` points at the gateway that fronts the Azure Functions (for local debugging it is `http://localhost:7071/api`).
+
 ## Additional Resources
 
 - [ESP32 Documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)

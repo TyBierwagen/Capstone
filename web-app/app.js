@@ -1,301 +1,183 @@
-// Configuration
-const API_BASE_URL = window.location.hostname.includes('localhost') 
-    ? 'http://localhost:7071/api' 
-    : '/api';  // Will use API Management gateway in production
+const API_BASE_URL = window.API_GATEWAY_BASE_URL || '/api';
 
-let isConnected = false;
-let deviceIp = '';
-let devicePort = 80;
-let refreshInterval = null;
+const state = {
+  isConnected: false,
+  deviceIp: '',
+  refreshIntervalId: null,
+};
 
-// Initialize on page load
-document.addEventListener('DOMContentLoaded', function() {
-    updateConnectionStatus(false);
-    addLogEntry('System initialized');
-    
-    // Load saved connection details
-    const savedIp = localStorage.getItem('deviceIp');
-    const savedPort = localStorage.getItem('devicePort');
-    
-    if (savedIp) document.getElementById('deviceIp').value = savedIp;
-    if (savedPort) document.getElementById('devicePort').value = savedPort;
+document.addEventListener('DOMContentLoaded', () => {
+  const savedIp = localStorage.getItem('deviceIp');
+  const savedInterval = localStorage.getItem('refreshInterval') || '30';
+  document.getElementById('deviceIp').value = savedIp || '';
+  document.getElementById('refreshInterval').value = savedInterval;
+  updateConnectionStatus(false);
+  addLogEntry('Dashboard ready');
 });
 
-// Connection Management
 async function toggleConnection() {
-    if (isConnected) {
-        disconnect();
-    } else {
-        await connect();
-    }
+  if (state.isConnected) {
+    disconnect();
+  } else {
+    await connect();
+  }
 }
 
 async function connect() {
-    deviceIp = document.getElementById('deviceIp').value.trim();
-    devicePort = document.getElementById('devicePort').value;
-    
-    if (!deviceIp) {
-        showAlert('Please enter a valid IP address', 'error');
-        return;
-    }
-    
-    showAlert('Connecting to device...', 'success');
-    addLogEntry(`Attempting to connect to ${deviceIp}:${devicePort}`);
-    
-    try {
-        // Register device with backend
-        const response = await fetch(`${API_BASE_URL}/devices`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                ip: deviceIp,
-                port: devicePort,
-                type: 'soil_sensor'
-            })
-        });
-        
-        if (response.ok) {
-            isConnected = true;
-            updateConnectionStatus(true);
-            localStorage.setItem('deviceIp', deviceIp);
-            localStorage.setItem('devicePort', devicePort);
-            showAlert('Successfully connected!', 'success');
-            addLogEntry('Connected successfully');
-            
-            // Start auto-refresh
-            startAutoRefresh();
-        } else {
-            throw new Error('Connection failed');
-        }
-    } catch (error) {
-        console.error('Connection error:', error);
-        showAlert('Failed to connect. Using mock data.', 'error');
-        addLogEntry('Connection failed, using mock data');
-        
-        // Simulate connection for demo purposes
-        isConnected = true;
-        updateConnectionStatus(true);
-        startAutoRefresh();
-    }
+  const ipInput = document.getElementById('deviceIp').value.trim();
+
+  if (!ipInput) {
+    showAlert('Enter the device IP before connecting', 'error');
+    return;
+  }
+
+  state.deviceIp = ipInput;
+  state.isConnected = true;
+  localStorage.setItem('deviceIp', ipInput);
+  updateConnectionStatus(true);
+  showAlert('Connected to backend', 'success');
+  addLogEntry(`Tracking device ${ipInput}`);
+  startAutoRefresh();
 }
 
 function disconnect() {
-    isConnected = false;
-    updateConnectionStatus(false);
-    stopAutoRefresh();
-    showAlert('Disconnected from device', 'success');
-    addLogEntry('Disconnected');
-    
-    // Clear sensor readings
-    document.getElementById('moisture').textContent = '--';
-    document.getElementById('temperature').textContent = '--';
-    document.getElementById('ph').textContent = '--';
-    document.getElementById('light').textContent = '--';
+  state.isConnected = false;
+  state.deviceIp = '';
+  stopAutoRefresh();
+  updateConnectionStatus(false);
+  showAlert('Disconnected', 'error');
+  addLogEntry('Connection closed');
+  resetSensorDisplay();
 }
 
 function updateConnectionStatus(connected) {
-    const indicator = document.getElementById('statusIndicator');
-    const connectBtn = document.getElementById('connectBtn');
-    
-    if (connected) {
-        indicator.classList.add('connected');
-        indicator.classList.remove('disconnected');
-        connectBtn.textContent = 'Disconnect';
-    } else {
-        indicator.classList.add('disconnected');
-        indicator.classList.remove('connected');
-        connectBtn.textContent = 'Connect';
-    }
+  const indicator = document.getElementById('statusIndicator');
+  const button = document.getElementById('connectBtn');
+  indicator.classList.toggle('connected', connected);
+  indicator.classList.toggle('disconnected', !connected);
+  button.textContent = connected ? 'Disconnect' : 'Connect';
 }
 
-// Data Management
 async function refreshData() {
-    if (!isConnected) {
-        showAlert('Please connect to a device first', 'error');
-        return;
-    }
-    
-    try {
-        const response = await fetch(`${API_BASE_URL}/sensor-data?deviceIp=${deviceIp}`);
-        
-        if (response.ok) {
-            const data = await response.json();
-            updateSensorDisplay(data);
-            addLogEntry('Data refreshed');
-        } else {
-            throw new Error('Failed to fetch data');
-        }
-    } catch (error) {
-        console.error('Data fetch error:', error);
-        // Use mock data for demonstration
-        const mockData = generateMockData();
-        updateSensorDisplay(mockData);
-        addLogEntry('Using mock data');
-    }
-}
+  if (!state.isConnected) {
+    showAlert('Connect to a device before refreshing', 'error');
+    return;
+  }
 
-function generateMockData() {
-    return {
-        moisture: (Math.random() * 40 + 30).toFixed(1),
-        temperature: (Math.random() * 10 + 20).toFixed(1),
-        ph: (Math.random() * 2 + 6).toFixed(1),
-        light: Math.floor(Math.random() * 500 + 300)
-    };
-}
+  try {
+    const response = await fetch(`${API_BASE_URL}/sensor-data?deviceIp=${encodeURIComponent(state.deviceIp)}`, {
+      cache: 'no-store',
+    });
 
-function updateSensorDisplay(data) {
-    document.getElementById('moisture').textContent = data.moisture;
-    document.getElementById('temperature').textContent = data.temperature;
-    document.getElementById('ph').textContent = data.ph;
-    document.getElementById('light').textContent = data.light;
-    
-    // Save data to backend
-    saveSensorData(data);
-}
-
-async function saveSensorData(data) {
-    try {
-        await fetch(`${API_BASE_URL}/sensor-data`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                deviceIp: deviceIp,
-                timestamp: new Date().toISOString(),
-                ...data
-            })
-        });
-    } catch (error) {
-        console.error('Failed to save data:', error);
+    if (response.status === 404) {
+      showAlert('No data yet for that device', 'warning');
+      addLogEntry('Waiting for sensor data to arrive');
+      return;
     }
+
+    if (!response.ok) {
+      throw new Error('Failed to load sensor data');
+    }
+
+    const payload = await response.json();
+    updateSensorDisplay(payload);
+    updateDeviceInfo(payload);
+    addLogEntry('Fresh data pulled from the database');
+  } catch (error) {
+    console.error('Refresh error', error);
+    showAlert('Unable to reach the API', 'error');
+    addLogEntry('Refresh failed');
+  }
 }
 
 function startAutoRefresh() {
-    if (refreshInterval) {
-        clearInterval(refreshInterval);
-    }
-    
-    // Initial refresh
-    refreshData();
-    
-    // Set up interval
-    const interval = parseInt(document.getElementById('samplingInterval').value) || 60;
-    refreshInterval = setInterval(refreshData, interval * 1000);
-    addLogEntry(`Auto-refresh started (${interval}s interval)`);
+  stopAutoRefresh();
+  refreshData();
+
+  const intervalInput = document.getElementById('refreshInterval');
+  const seconds = Math.max(5, parseInt(intervalInput.value, 10) || 30);
+  intervalInput.value = seconds;
+  localStorage.setItem('refreshInterval', seconds);
+
+  state.refreshIntervalId = setInterval(refreshData, seconds * 1000);
+  addLogEntry(`Auto-refresh every ${seconds}s`);
 }
 
 function stopAutoRefresh() {
-    if (refreshInterval) {
-        clearInterval(refreshInterval);
-        refreshInterval = null;
-        addLogEntry('Auto-refresh stopped');
-    }
+  if (state.refreshIntervalId) {
+    clearInterval(state.refreshIntervalId);
+    state.refreshIntervalId = null;
+    addLogEntry('Auto-refresh paused');
+  }
 }
 
-// Control Functions
-async function updateInterval() {
-    const interval = parseInt(document.getElementById('samplingInterval').value);
-    
-    if (interval < 1) {
-        showAlert('Interval must be at least 1 second', 'error');
-        return;
+function resetSensorDisplay() {
+  ['moisture', 'temperature', 'humidity', 'ph', 'light', 'lastUpdated', 'commandStatus', 'deviceStatus', 'deviceType', 'deviceRegistered', 'deviceLastSeen'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.textContent = '--';
     }
-    
-    if (isConnected) {
-        stopAutoRefresh();
-        startAutoRefresh();
-        showAlert(`Sampling interval updated to ${interval} seconds`, 'success');
-    } else {
-        showAlert('Please connect to a device first', 'error');
-    }
+  });
 }
 
-async function startSampling() {
-    if (!isConnected) {
-        showAlert('Please connect to a device first', 'error');
-        return;
-    }
-    
-    try {
-        const response = await fetch(`${API_BASE_URL}/control`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                deviceIp: deviceIp,
-                command: 'start'
-            })
-        });
-        
-        showAlert('Sampling started', 'success');
-        addLogEntry('Sampling started');
-    } catch (error) {
-        console.error('Control error:', error);
-        showAlert('Sampling started (mock)', 'success');
-        addLogEntry('Sampling started (mock mode)');
-    }
+function updateSensorDisplay(payload) {
+  document.getElementById('moisture').textContent = formatValue(payload.moisture, 1);
+  document.getElementById('temperature').textContent = formatValue(payload.temperature, 1);
+  document.getElementById('humidity').textContent = formatValue(payload.humidity, 1);
+  document.getElementById('ph').textContent = formatValue(payload.ph, 2);
+  document.getElementById('light').textContent = payload.light ?? '--';
+  document.getElementById('lastUpdated').textContent = formatTimestamp(payload.timestamp);
+  document.getElementById('commandStatus').textContent = payload.commandStatus ?? 'idle';
 }
 
-async function stopSampling() {
-    if (!isConnected) {
-        showAlert('Please connect to a device first', 'error');
-        return;
-    }
-    
-    try {
-        const response = await fetch(`${API_BASE_URL}/control`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                deviceIp: deviceIp,
-                command: 'stop'
-            })
-        });
-        
-        showAlert('Sampling stopped', 'success');
-        addLogEntry('Sampling stopped');
-    } catch (error) {
-        console.error('Control error:', error);
-        showAlert('Sampling stopped (mock)', 'success');
-        addLogEntry('Sampling stopped (mock mode)');
-    }
+function updateDeviceInfo(payload) {
+  const device = payload.device ?? {};
+  document.getElementById('deviceStatus').textContent = device.status ?? 'unknown';
+  document.getElementById('deviceType').textContent = device.type ?? 'soil_sensor';
+  document.getElementById('deviceRegistered').textContent = device.registeredAt
+    ? formatTimestamp(device.registeredAt)
+    : '--';
+  document.getElementById('deviceLastSeen').textContent = device.lastSeen
+    ? formatTimestamp(device.lastSeen)
+    : '--';
 }
 
-// UI Helper Functions
-function showAlert(message, type) {
-    const alert = document.getElementById('alert');
-    alert.textContent = message;
-    alert.className = `alert ${type} show`;
-    
-    setTimeout(() => {
-        alert.classList.remove('show');
-    }, 5000);
+function formatValue(value, precision) {
+  if (value === null || value === undefined) {
+    return '--';
+  }
+  return typeof value === 'number' ? value.toFixed(precision) : value;
 }
 
-function addLogEntry(message) {
-    const log = document.getElementById('activityLog');
-    const entry = document.createElement('div');
-    entry.className = 'log-entry';
-    
-    const time = new Date().toLocaleTimeString();
-    entry.innerHTML = `<span class="log-time">${time}</span><span>${message}</span>`;
-    
-    log.insertBefore(entry, log.firstChild);
-    
-    // Keep only last 50 entries
-    while (log.children.length > 50) {
-        log.removeChild(log.lastChild);
-    }
+function formatTimestamp(value) {
+  if (!value) {
+    return '--';
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+
+function showAlert(message, type = 'success') {
+  const alert = document.getElementById('alert');
+  alert.textContent = message;
+  alert.className = `alert ${type} show`;
+  setTimeout(() => alert.classList.remove('show'), 4500);
+}
+
+function addLogEntry(text) {
+  const log = document.getElementById('activityLog');
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  const time = new Date().toLocaleTimeString();
+  entry.innerHTML = `<span class="log-time">${time}</span><span>${text}</span>`;
+  log.insertBefore(entry, log.firstChild);
+  while (log.children.length > 60) {
+    log.removeChild(log.lastChild);
+  }
 }
 
 function clearLog() {
-    const log = document.getElementById('activityLog');
-    log.innerHTML = '<div class="log-entry"><span class="log-time">--:--:--</span><span>Log cleared</span></div>';
-    addLogEntry('Log cleared');
+  const log = document.getElementById('activityLog');
+  log.innerHTML = '<div class="log-entry"><span class="log-time">--:--:--</span><span>Log cleared</span></div>';
+  addLogEntry('Log cleared');
 }
