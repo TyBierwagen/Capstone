@@ -26,26 +26,25 @@ async function toggleConnection() {
 async function connect() {
   const ipInput = document.getElementById('deviceIp').value.trim();
 
-  if (!ipInput) {
-    showAlert('Enter the device IP before connecting', 'error');
-    return;
-  }
-
   state.deviceIp = ipInput;
   state.isConnected = true;
-  localStorage.setItem('deviceIp', ipInput);
+  if (ipInput) {
+    localStorage.setItem('deviceIp', ipInput);
+    addLogEntry(`Filtering for device ${ipInput}`);
+  } else {
+    addLogEntry('Watching all device telemetry');
+  }
+
   updateConnectionStatus(true);
-  showAlert('Connected to backend', 'success');
-  addLogEntry(`Tracking device ${ipInput}`);
+  showAlert('Dashboard active', 'success');
   startAutoRefresh();
 }
 
 function disconnect() {
   state.isConnected = false;
-  state.deviceIp = '';
   stopAutoRefresh();
   updateConnectionStatus(false);
-  showAlert('Disconnected', 'error');
+  showAlert('Monitoring paused', 'error');
   addLogEntry('Connection closed');
   resetSensorDisplay();
 }
@@ -60,18 +59,24 @@ function updateConnectionStatus(connected) {
 
 async function refreshData() {
   if (!state.isConnected) {
-    showAlert('Connect to a device before refreshing', 'error');
+    showAlert('Activate monitoring to refresh', 'error');
     return;
   }
 
   try {
-    const response = await fetch(`${API_BASE_URL}/sensor-data?deviceIp=${encodeURIComponent(state.deviceIp)}`, {
+    let url = `${API_BASE_URL}/sensor-data`;
+    if (state.deviceIp) {
+      url += `?deviceIp=${encodeURIComponent(state.deviceIp)}`;
+    }
+
+    const response = await fetch(url, {
       cache: 'no-store',
     });
 
     if (response.status === 404) {
-      showAlert('No data yet for that device', 'warning');
-      addLogEntry('Waiting for sensor data to arrive');
+      const mode = state.deviceIp ? `device ${state.deviceIp}` : 'any device';
+      showAlert(`No data found for ${mode}`, 'warning');
+      addLogEntry('Waiting for incoming data...');
       return;
     }
 

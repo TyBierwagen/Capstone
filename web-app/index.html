@@ -41,7 +41,7 @@
     .container {
       position: relative;
       max-width: 1200px;
-      margin: 0 auto 40px;
+      margin: 24px auto 40px;
       padding: 0 24px 40px;
     }
 
@@ -279,7 +279,7 @@
   <div class="glow-layer"></div>
   <section class="hero">
     <h1>Soil Robot Insights</h1>
-    <p>Connect to the API gateway to read the latest row saved in SQLite. Device heartbeats, commands, and sensor data all pass through this panel.</p>
+    <p>View live telemetry from your soil sensors in real-time. Data is collected from the cloud backend and displayed instantly without needing the device's local IP address.</p>
   </section>
 
   <div class="container">
@@ -289,8 +289,9 @@
       <div class="card">
         <h2><span id="statusIndicator" class="status-indicator disconnected"></span>Connection</h2>
         <div class="form-row">
-          <label for="deviceIp">Device IP</label>
+          <label for="deviceIp">Device IP (Optional)</label>
           <input type="text" id="deviceIp" placeholder="e.g., 192.168.1.120" />
+          <small style="color: #94a3b8; font-size: 11px; display: block; margin-top: 4px;">Leave blank to see the latest data from any device</small>
         </div>
         <div class="form-row">
           <label for="refreshInterval">Refresh interval (seconds)</label>

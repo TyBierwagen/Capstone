@@ -70,15 +70,23 @@ def store_sensor_entry(payload: dict) -> dict:
     return entry
 
 
-def fetch_latest_sensor_entry(device_ip: str) -> Optional[dict]:
-    # Find the latest entry for this device
-    matching = [e for e in _sensor_data if e.get("deviceIp") == device_ip]
+def fetch_latest_sensor_entry(device_ip: Optional[str] = None, device_id: Optional[str] = None) -> Optional[dict]:
+    # Filter by IP or ID if provided, otherwise get everything
+    matching = _sensor_data
+    if device_ip:
+        matching = [e for e in matching if e.get("deviceIp") == device_ip]
+    if device_id:
+        matching = [e for e in matching if e.get("deviceId") == device_id]
+
     if not matching:
         return None
     
     # Sort by timestamp descending and get the first
     latest = sorted(matching, key=lambda x: x.get("timestamp", ""), reverse=True)[0]
-    device = _devices.get(device_ip)
+    
+    # Enrich with device metadata if we have it
+    target_ip = latest.get("deviceIp")
+    device = _devices.get(target_ip) if target_ip else None
     
     return {
         **latest,
@@ -160,14 +168,15 @@ def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="sensor-data", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def get_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
     device_ip = req.params.get("deviceIp")
+    device_id = req.params.get("deviceId")
 
-    if not device_ip:
-        return json_response({"error": "Device IP is required"}, status=400)
-
-    entry = fetch_latest_sensor_entry(device_ip)
+    entry = fetch_latest_sensor_entry(device_ip=device_ip, device_id=device_id)
 
     if not entry:
-        return json_response({"error": "No data available for this device"}, status=404)
+        message = "No data available"
+        if device_ip: message += f" for IP {device_ip}"
+        if device_id: message += f" for ID {device_id}"
+        return json_response({"error": message}, status=404)
 
     return json_response(entry)
 
