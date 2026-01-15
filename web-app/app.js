@@ -8,9 +8,7 @@ const state = {
 
 document.addEventListener('DOMContentLoaded', () => {
   const savedIp = localStorage.getItem('deviceIp');
-  const savedInterval = localStorage.getItem('refreshInterval') || '30';
   document.getElementById('deviceIp').value = savedIp || '';
-  document.getElementById('refreshInterval').value = savedInterval;
   updateConnectionStatus(false);
   addLogEntry('Dashboard ready');
 });
@@ -121,13 +119,9 @@ function startAutoRefresh() {
   stopAutoRefresh();
   refreshData();
 
-  const intervalInput = document.getElementById('refreshInterval');
-  const seconds = Math.max(5, parseInt(intervalInput.value, 10) || 30);
-  intervalInput.value = seconds;
-  localStorage.setItem('refreshInterval', seconds);
-
+  const seconds = 30;
   state.refreshIntervalId = setInterval(refreshData, seconds * 1000);
-  addLogEntry(`Auto-refresh every ${seconds}s`);
+  addLogEntry(`Auto-refresh active (30s)`);
 }
 
 function stopAutoRefresh() {
