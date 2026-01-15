@@ -266,12 +266,59 @@
     @media (max-width: 640px) {
       .container {
         padding: 0 16px 24px;
-        margin-top: -40px;
+        margin-top: 20px;
       }
 
       button {
         font-size: 13px;
       }
+    }
+
+    /* Toggle Switch CSS */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+    }
+
+    .switch input { 
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: rgba(255,255,255,0.1);
+      transition: .4s;
+      border-radius: 24px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider {
+      background-color: #3b82f6;
+    }
+
+    input:checked + .slider:before {
+      transform: translateX(20px);
     }
   </style>
 </head>
@@ -288,11 +335,23 @@
     <div class="grid">
       <div class="card">
         <h2><span id="statusIndicator" class="status-indicator disconnected"></span>Connection</h2>
-        <div class="form-row">
-          <label for="deviceIp">Device IP (Optional)</label>
-          <input type="text" id="deviceIp" placeholder="e.g., 192.168.1.120" />
-          <small style="color: #94a3b8; font-size: 11px; display: block; margin-top: 4px;">Leave blank to see the latest data from any device</small>
+        
+        <div class="form-row" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; background: rgba(255,255,255,0.05); padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <label style="margin-bottom: 0; font-weight: 600;">Filter by IP</label>
+            <span style="font-size: 11px; color: #94a3b8;">Default: Latest from any device</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="filterIpToggle" onchange="toggleIpFilter()">
+            <span class="slider"></span>
+          </label>
         </div>
+
+        <div id="ipInputContainer" class="form-row" style="display: none;">
+          <label for="deviceIp">Device IP Address</label>
+          <input type="text" id="deviceIp" placeholder="e.g., 192.168.1.120" oninput="updateActiveIp()" />
+        </div>
+
         <div class="form-row">
           <label for="refreshInterval">Refresh interval (seconds)</label>
           <input type="number" id="refreshInterval" min="5" value="30" />
@@ -370,15 +429,6 @@
           </div>
         </div>
         <button class="plain" style="margin-top: 12px;" onclick="clearLog()">Clear Log</button>
-      </div>
-
-      <div class="card">
-        <h2>Data Pipeline</h2>
-        <ul class="pipeline-list">
-          <li>ESP32 posts readings to <strong>POST /sensor-data</strong></li>
-          <li>Azure Functions persists the row and joins metadata</li>
-          <li>UI fetches <strong>GET /sensor-data?deviceIp=...</strong> to read the latest entry</li>
-        </ul>
       </div>
     </div>
   </div>

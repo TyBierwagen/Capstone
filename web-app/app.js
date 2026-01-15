@@ -15,6 +15,21 @@ document.addEventListener('DOMContentLoaded', () => {
   addLogEntry('Dashboard ready');
 });
 
+function toggleIpFilter() {
+  const isEnabled = document.getElementById('filterIpToggle').checked;
+  const container = document.getElementById('ipInputContainer');
+  container.style.display = isEnabled ? 'block' : 'none';
+  
+  if (!isEnabled) {
+    document.getElementById('deviceIp').value = '';
+    state.deviceIp = '';
+    if (state.isConnected) {
+      addLogEntry('Switching to global telemetry');
+      refreshData();
+    }
+  }
+}
+
 async function toggleConnection() {
   if (state.isConnected) {
     disconnect();
@@ -24,11 +39,18 @@ async function toggleConnection() {
 }
 
 async function connect() {
+  const isFilterEnabled = document.getElementById('filterIpToggle').checked;
   const ipInput = document.getElementById('deviceIp').value.trim();
 
-  state.deviceIp = ipInput;
+  if (isFilterEnabled && !ipInput) {
+    showAlert('Please enter an IP or turn off filtering', 'error');
+    return;
+  }
+
+  state.deviceIp = isFilterEnabled ? ipInput : '';
   state.isConnected = true;
-  if (ipInput) {
+
+  if (state.deviceIp) {
     localStorage.setItem('deviceIp', ipInput);
     addLogEntry(`Filtering for device ${ipInput}`);
   } else {
@@ -145,6 +167,12 @@ function updateDeviceInfo(payload) {
   document.getElementById('deviceLastSeen').textContent = device.lastSeen
     ? formatTimestamp(device.lastSeen)
     : '--';
+}
+
+function updateActiveIp() {
+  if (state.isConnected) {
+    state.deviceIp = document.getElementById('deviceIp').value.trim();
+  }
 }
 
 function formatValue(value, precision) {
