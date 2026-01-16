@@ -81,15 +81,31 @@ function initChart() {
 }
 
 function updateChart(history) {
-  if (!state.chart) return;
+  if (!state.chart || !history) return;
+
+  // Sort history by time (ascending) for the chart
+  const sorted = [...history].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
   
-  state.chart.data.labels = history.map(h => {
+  state.chart.data.labels = sorted.map(h => {
     const d = new Date(h.timestamp);
-    return isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (isNaN(d.getTime())) return '';
+    
+    // Check if it's today
+    const today = new Date();
+    const isToday = d.getDate() === today.getDate() && 
+                    d.getMonth() === today.getMonth() && 
+                    d.getFullYear() === today.getFullYear();
+    
+    if (isToday) {
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    // For other days, include the date
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + 
+           d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   });
   
-  state.chart.data.datasets[0].data = history.map(h => h.moisture);
-  state.chart.data.datasets[1].data = history.map(h => h.temperature);
+  state.chart.data.datasets[0].data = sorted.map(h => h.moisture);
+  state.chart.data.datasets[1].data = sorted.map(h => h.temperature);
   state.chart.update('none'); // Update without animation for performance
 }
 
@@ -164,6 +180,7 @@ async function refreshData() {
   }
 
   try {
+    const limit = document.getElementById('timeLimit')?.value || '50';
     const params = new URLSearchParams();
     if (state.deviceIp) params.append('deviceIp', state.deviceIp);
     
@@ -171,9 +188,10 @@ async function refreshData() {
     const latestResponse = await fetch(`${API_BASE_URL}/sensor-data?${params.toString()}`, { cache: 'no-store' });
     
     // Fetch history for the graph
-    params.append('history', 'true');
-    params.append('limit', '50');
-    const historyResponse = await fetch(`${API_BASE_URL}/sensor-data?${params.toString()}`, { cache: 'no-store' });
+    const historyParams = new URLSearchParams(params);
+    historyParams.append('history', 'true');
+    historyParams.append('limit', limit);
+    const historyResponse = await fetch(`${API_BASE_URL}/sensor-data?${historyParams.toString()}`, { cache: 'no-store' });
 
     if (latestResponse.status === 404) {
       const mode = state.deviceIp ? `device ${state.deviceIp}` : 'any device';
@@ -193,7 +211,7 @@ async function refreshData() {
       updateChart(historyData.history);
     }
     
-    addLogEntry('Fresh telemetry synced');
+    addLogEntry(`Telemetry synced (${limit} pts)`);
   } catch (error) {
     console.error('Refresh error', error);
     showAlert('Unable to reach the API', 'error');
@@ -274,13 +292,22 @@ function formatTimestamp(value) {
     return '--';
   }
   
-  // If the value is a number (like the microcontroller's milliseconds), treat it as a relative time from now
+  // If the value is a number (like the microcontroller's milliseconds), it's likely broken historical data
+  // or a raw uptime. If the backend is now fixed, this will only happen for old records.
   if (typeof value === 'number') {
-    return new Date().toLocaleString() + ' (Device uptime: ' + (value/1000).toFixed(0) + 's)';
+    return new Date(value).toLocaleString() + ' (Raw)';
   }
 
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+  if (Number.isNaN(parsed.getTime())) return value;
+
+  // Format as "Jan 15, 3:34 PM"
+  return parsed.toLocaleString([], { 
+    month: 'short', 
+    day: 'numeric', 
+    hour: '2-digit', 
+    minute: '2-digit' 
+  });
 }
 
 function showAlert(message, type = 'success') {

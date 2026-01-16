@@ -71,7 +71,9 @@ def persist_device(device_id: str, ip_address: str, port: int, device_type: str)
 
 
 def store_sensor_entry(payload: dict) -> dict:
-    timestamp = payload.get("timestamp") or now_iso()
+    # Use server time consistently for SensorData to ensure reliable charting
+    # Microcontrollers often send relative uptime (millis) which breaks absolute time history
+    timestamp = now_iso()
     device_ip = payload.get("deviceIp", "unknown")
     
     entry = {

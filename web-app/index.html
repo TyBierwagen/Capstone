@@ -417,7 +417,18 @@
     </div>
 
       <div class="card" style="margin-top: 12px; margin-bottom: 24px; grid-column: 1 / -1;">
-        <h2>Environmental Trends</h2>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <h2 style="margin: 0;">Environmental Trends</h2>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <label for="timeLimit" style="font-size: 13px; color: #94a3b8;">Show last:</label>
+            <select id="timeLimit" onchange="refreshData()" style="padding: 4px 8px; border-radius: 6px; background: rgba(15, 23, 42, 0.6); color: white; border: 1px solid rgba(255,255,255,0.1); font-size: 13px;">
+              <option value="20">20 points</option>
+              <option value="50" selected>50 points</option>
+              <option value="100">100 points</option>
+              <option value="500">500 points</option>
+            </select>
+          </div>
+        </div>
         <div style="height: 300px; position: relative;">
           <canvas id="sensorChart"></canvas>
         </div>
