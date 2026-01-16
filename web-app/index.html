@@ -372,6 +372,7 @@
         <div class="form-row">
           <label for="functionKey">Access Key (Optional)</label>
           <input type="password" id="functionKey" placeholder="Enter Azure Function key" oninput="updateActiveKey()" />
+          <div id="functionKeyHint" style="font-size:11px; color:#94a3b8; margin-top:6px; display:none;">Key set: <span id="maskedKey">••••••••</span></div>
         </div>
 
         <button id="connectBtn" onclick="toggleConnection()">Connect</button>
