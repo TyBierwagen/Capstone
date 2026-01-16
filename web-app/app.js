@@ -293,19 +293,14 @@ function formatTimestamp(value) {
     return '--';
   }
   
-  // If the value is a number (like the microcontroller's milliseconds), it's likely broken historical data
-  // or a raw uptime. If the backend is now fixed, this will only happen for old records.
-  if (typeof value === 'number') {
-    return new Date(value).toLocaleString() + ' (Raw)';
-  }
-
+  // Handle ISO strings or other string dates
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
 
-  // Format as "Jan 15, 3:34 PM"
+  // Always show month and date for context, plus 2-digit time
   return parsed.toLocaleString([], { 
     month: 'short', 
-    day: 'numeric', 
+    day: 'numeric',
     hour: '2-digit', 
     minute: '2-digit' 
   });
