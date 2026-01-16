@@ -80,7 +80,7 @@ function initChart() {
   });
 }
 
-function updateChart(history) {
+function updateChart(history, timescale = '1h') {
   if (!state.chart || !history) return;
 
   // Sort history by time (ascending) for the chart
@@ -90,9 +90,16 @@ function updateChart(history) {
     const d = new Date(h.timestamp);
     if (isNaN(d.getTime())) return '';
     
-    // Always show month, day, and year for context as requested
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: '2-digit' }) + ' ' + 
-           d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    
+    if (timescale === '1h') {
+      return timeStr;
+    } else if (timescale === '12h' || timescale === '24h') {
+      return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + timeStr;
+    } else {
+      // 3d, 7d, all scales include year
+      return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: '2-digit' }) + ' ' + timeStr;
+    }
   });
   
   state.chart.data.datasets[0].data = sorted.map(h => h.humidity);
@@ -199,7 +206,7 @@ async function refreshData() {
 
     if (historyResponse.ok) {
       const historyData = await historyResponse.json();
-      updateChart(historyData.history);
+      updateChart(historyData.history, timescale);
     }
     
     const scaleLabel = document.querySelector(`#timeScale option[value="${timescale}"]`)?.textContent || timescale;
