@@ -164,11 +164,30 @@ def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
     return json_response({"message": "Sensor data stored", "data": entry}, status=201)
 
 
+def fetch_sensor_history(device_ip: Optional[str] = None, device_id: Optional[str] = None, limit: int = 100) -> list:
+    matching = _sensor_data
+    if device_ip:
+        matching = [e for e in matching if e.get("deviceIp") == device_ip]
+    if device_id:
+        matching = [e for e in matching if e.get("deviceId") == device_id]
+    
+    # Sort by timestamp descending and take the top N
+    history = sorted(matching, key=lambda x: x.get("timestamp", ""), reverse=True)[:limit]
+    # Return in chronological order for the graph
+    return list(reversed(history))
+
+
 @app.function_name("getSensorData")
 @app.route(route="sensor-data", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def get_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
     device_ip = req.params.get("deviceIp")
     device_id = req.params.get("deviceId")
+    is_history = parse_bool(req.params.get("history"), False)
+
+    if is_history:
+        limit = int(req.params.get("limit", 100))
+        data = fetch_sensor_history(device_ip=device_ip, device_id=device_id, limit=limit)
+        return json_response({"count": len(data), "history": data})
 
     entry = fetch_latest_sensor_entry(device_ip=device_ip, device_id=device_id)
 

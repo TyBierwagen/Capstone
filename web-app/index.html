@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Soil Insights</title>
   <link rel="icon" href="plant.ico" type="image/x-icon">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     * {
       box-sizing: border-box;
@@ -360,11 +361,11 @@
       <div class="card">
         <h2>Live Sensor Readings</h2>
         <div class="sensor-grid">
-          <div class="sensor-card">
+          <!-- <div class="sensor-card">
             <div class="sensor-label">Moisture</div>
             <div class="sensor-value" id="moisture">--</div>
             <div class="sensor-unit">%</div>
-          </div>
+          </div> -->
           <div class="sensor-card">
             <div class="sensor-label">Temperature</div>
             <div class="sensor-value" id="temperature">--</div>
@@ -375,23 +376,22 @@
             <div class="sensor-value" id="humidity">--</div>
             <div class="sensor-unit">%</div>
           </div>
-          <div class="sensor-card">
+          <!-- <div class="sensor-card">
             <div class="sensor-label">pH Level</div>
             <div class="sensor-value" id="ph">--</div>
             <div class="sensor-unit">pH</div>
-          </div>
-          <div class="sensor-card">
+          </div> -->
+          <!-- <div class="sensor-card">
             <div class="sensor-label">Light</div>
             <div class="sensor-value" id="light">--</div>
             <div class="sensor-unit">lux</div>
-          </div>
+          </div> -->
         </div>
         <div style="margin-top: 18px; display:flex; justify-content:space-between; font-size: 13px; color:#94a3b8;">
           <span>Last updated: <strong id="lastUpdated">--</strong></span>
           <span>Command status: <strong id="commandStatus">--</strong></span>
         </div>
       </div>
-
       <div class="card">
         <h2>Device Metadata</h2>
         <ul class="meta-list">
@@ -415,6 +415,15 @@
         <p style="margin-top: 12px; font-size: 13px; color:#cbd5f5;">Data surfaces directly from Azure Functions. Use the log below for live telemetry.</p>
       </div>
     </div>
+
+      <div class="card" style="margin-top: 12px; margin-bottom: 24px; grid-column: 1 / -1;">
+        <h2>Environmental Trends</h2>
+        <div style="height: 300px; position: relative;">
+          <canvas id="sensorChart"></canvas>
+        </div>
+      </div>
+
+      
 
     <div class="grid">
       <div class="card">

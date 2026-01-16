@@ -4,6 +4,7 @@ const state = {
   isConnected: false,
   deviceIp: '',
   refreshIntervalId: null,
+  chart: null,
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -16,9 +17,81 @@ document.addEventListener('DOMContentLoaded', () => {
     yearSpan.textContent = new Date().getFullYear();
   }
 
+  initChart();
   updateConnectionStatus(false);
   addLogEntry('Dashboard ready');
 });
+
+function initChart() {
+  const ctx = document.getElementById('sensorChart').getContext('2d');
+  state.chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        {
+          label: 'Moisture (%)',
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59, 130, 246, 0.1)',
+          data: [],
+          tension: 0.3,
+          yAxisID: 'y',
+        },
+        {
+          label: 'Temp (°C)',
+          borderColor: '#f87171',
+          data: [],
+          tension: 0.3,
+          yAxisID: 'y1',
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          labels: { color: '#cbd5f5' }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: '#94a3b8' }
+        },
+        y: {
+          type: 'linear',
+          display: true,
+          position: 'left',
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: '#3b82f6' },
+          title: { display: true, text: 'Moisture %', color: '#3b82f6' }
+        },
+        y1: {
+          type: 'linear',
+          display: true,
+          position: 'right',
+          grid: { drawOnChartArea: false },
+          ticks: { color: '#f87171' },
+          title: { display: true, text: 'Temp °C', color: '#f87171' }
+        }
+      }
+    }
+  });
+}
+
+function updateChart(history) {
+  if (!state.chart) return;
+  
+  state.chart.data.labels = history.map(h => {
+    const d = new Date(h.timestamp);
+    return isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  });
+  
+  state.chart.data.datasets[0].data = history.map(h => h.moisture);
+  state.chart.data.datasets[1].data = history.map(h => h.temperature);
+  state.chart.update('none'); // Update without animation for performance
+}
 
 function toggleIpFilter() {
   const isEnabled = document.getElementById('filterIpToggle').checked;
@@ -91,30 +164,36 @@ async function refreshData() {
   }
 
   try {
-    let url = `${API_BASE_URL}/sensor-data`;
-    if (state.deviceIp) {
-      url += `?deviceIp=${encodeURIComponent(state.deviceIp)}`;
-    }
+    const params = new URLSearchParams();
+    if (state.deviceIp) params.append('deviceIp', state.deviceIp);
+    
+    // Fetch latest for the top cards
+    const latestResponse = await fetch(`${API_BASE_URL}/sensor-data?${params.toString()}`, { cache: 'no-store' });
+    
+    // Fetch history for the graph
+    params.append('history', 'true');
+    params.append('limit', '50');
+    const historyResponse = await fetch(`${API_BASE_URL}/sensor-data?${params.toString()}`, { cache: 'no-store' });
 
-    const response = await fetch(url, {
-      cache: 'no-store',
-    });
-
-    if (response.status === 404) {
+    if (latestResponse.status === 404) {
       const mode = state.deviceIp ? `device ${state.deviceIp}` : 'any device';
       showAlert(`No data found for ${mode}`, 'warning');
       addLogEntry('Waiting for incoming data...');
       return;
     }
 
-    if (!response.ok) {
-      throw new Error('Failed to load sensor data');
-    }
+    if (!latestResponse.ok) throw new Error('Failed to load latest data');
+    
+    const latestData = await latestResponse.json();
+    updateSensorDisplay(latestData);
+    updateDeviceInfo(latestData);
 
-    const payload = await response.json();
-    updateSensorDisplay(payload);
-    updateDeviceInfo(payload);
-    addLogEntry('Fresh data pulled from the database');
+    if (historyResponse.ok) {
+      const historyData = await historyResponse.json();
+      updateChart(historyData.history);
+    }
+    
+    addLogEntry('Fresh telemetry synced');
   } catch (error) {
     console.error('Refresh error', error);
     showAlert('Unable to reach the API', 'error');
