@@ -2,17 +2,21 @@ import azure.functions as func
 import datetime
 import json
 import logging
+import os
 import uuid
 from typing import Optional
+from azure.data.tables import TableServiceClient, UpdateMode
 
 app = func.FunctionApp()
 
-# In-memory storage (note: data is lost on cold starts, but works reliably on Azure)
-# For persistent storage, use Azure Table Storage, Cosmos DB, or Azure SQL
-_devices: dict = {}
-_sensor_data: list = []
-_control_commands: dict = {}
+# Storage Configuration
+conn_str = os.getenv("STORAGE_CONNECTION_STRING") or os.getenv("AzureWebJobsStorage")
+table_service = TableServiceClient.from_connection_string(conn_str) if conn_str else None
 
+def get_table_client(table_name: str):
+    if not table_service:
+        return None
+    return table_service.get_table_client(table_name)
 
 def now_iso() -> str:
     return datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
@@ -36,10 +40,21 @@ def generate_device_id() -> str:
 
 def persist_device(device_id: str, ip_address: str, port: int, device_type: str) -> dict:
     now = now_iso()
-    existing = _devices.get(ip_address)
+    client = get_table_client("Devices")
+    
+    # Try to get existing
+    existing = None
+    if client:
+        try:
+            existing = client.get_entity(partition_key="Device", row_key=ip_address.replace(".", "_"))
+        except:
+            pass
+
     registered_at = existing["registeredAt"] if existing else now
     
     device_info = {
+        "PartitionKey": "Device",
+        "RowKey": ip_address.replace(".", "_"),
         "id": device_id,
         "ip": ip_address,
         "port": port,
@@ -48,14 +63,21 @@ def persist_device(device_id: str, ip_address: str, port: int, device_type: str)
         "lastSeen": now,
         "status": "active",
     }
-    _devices[ip_address] = device_info
+    
+    if client:
+        client.upsert_entity(mode=UpdateMode.REPLACE, entity=device_info)
+    
     return device_info
 
 
 def store_sensor_entry(payload: dict) -> dict:
     timestamp = payload.get("timestamp") or now_iso()
+    device_ip = payload.get("deviceIp", "unknown")
+    
     entry = {
-        "deviceIp": payload.get("deviceIp"),
+        "PartitionKey": device_ip.replace(".", "_"),
+        "RowKey": f"{datetime.datetime.utcnow().timestamp()}_{uuid.uuid4().hex[:8]}",
+        "deviceIp": device_ip,
         "deviceId": payload.get("deviceId"),
         "commandStatus": payload.get("commandStatus"),
         "timestamp": timestamp,
@@ -65,34 +87,69 @@ def store_sensor_entry(payload: dict) -> dict:
         "ph": payload.get("ph"),
         "light": payload.get("light"),
     }
-    _sensor_data.append(entry)
-    logging.info("Sensor data recorded for %s", entry["deviceIp"])
+    
+    client = get_table_client("SensorData")
+    if client:
+        client.create_entity(entity=entry)
+        
+    logging.info("Sensor data recorded for %s", device_ip)
     return entry
 
 
 def fetch_latest_sensor_entry(device_ip: Optional[str] = None, device_id: Optional[str] = None) -> Optional[dict]:
-    # Filter by IP or ID if provided, otherwise get everything
-    matching = _sensor_data
-    if device_ip:
-        matching = [e for e in matching if e.get("deviceIp") == device_ip]
-    if device_id:
-        matching = [e for e in matching if e.get("deviceId") == device_id]
-
-    if not matching:
+    client = get_table_client("SensorData")
+    if not client:
         return None
-    
-    # Sort by timestamp descending and get the first
-    latest = sorted(matching, key=lambda x: x.get("timestamp", ""), reverse=True)[0]
-    
-    # Enrich with device metadata if we have it
-    target_ip = latest.get("deviceIp")
-    device = _devices.get(target_ip) if target_ip else None
-    
-    return {
-        **latest,
-        "device": device if device else None,
-    }
 
+    query = ""
+    if device_ip:
+        query = f"PartitionKey eq '{device_ip.replace('.', '_')}'"
+    
+    # Tables don't support easy "latest" across all partitions, so we query and sort
+    try:
+        entities = list(client.query_entities(query_filter=query))
+    except Exception as e:
+        logging.error(f"Table query error: {e}")
+        return None
+        
+    if not entities:
+        return None
+
+    latest = sorted(entities, key=lambda x: str(x.get("timestamp", "")), reverse=True)[0]
+    
+    # Get device info
+    device_client = get_table_client("Devices")
+    target_ip = latest.get("deviceIp")
+    device = None
+    if device_client and target_ip:
+        try:
+            device = device_client.get_entity(partition_key="Device", row_key=target_ip.replace(".", "_"))
+        except:
+            pass
+    
+    return {**dict(latest), "device": dict(device) if device else None}
+
+
+def fetch_sensor_history(device_ip: Optional[str] = None, device_id: Optional[str] = None, limit: int = 100) -> list:
+    client = get_table_client("SensorData")
+    if not client:
+        return []
+
+    query = ""
+    if device_ip:
+        query = f"PartitionKey eq '{device_ip.replace('.', '_')}'"
+        
+    try:
+        entities = list(client.query_entities(query_filter=query))
+    except Exception as e:
+        logging.error(f"Table query error: {e}")
+        return []
+        
+    history = sorted(entities, key=lambda x: str(x.get("timestamp", "")), reverse=True)[:limit]
+    return list(reversed([dict(e) for e in history]))
+
+
+_control_commands: dict = {} # Keep commands in-memory for now as they are transient
 
 def save_control_command(device_ip: str, command: str, payload: Optional[dict]) -> dict:
     issued_at = now_iso()
@@ -162,19 +219,6 @@ def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
 
     entry = store_sensor_entry(payload)
     return json_response({"message": "Sensor data stored", "data": entry}, status=201)
-
-
-def fetch_sensor_history(device_ip: Optional[str] = None, device_id: Optional[str] = None, limit: int = 100) -> list:
-    matching = _sensor_data
-    if device_ip:
-        matching = [e for e in matching if e.get("deviceIp") == device_ip]
-    if device_id:
-        matching = [e for e in matching if e.get("deviceId") == device_id]
-    
-    # Sort by timestamp descending and take the top N
-    history = sorted(matching, key=lambda x: x.get("timestamp", ""), reverse=True)[:limit]
-    # Return in chronological order for the graph
-    return list(reversed(history))
 
 
 @app.function_name("getSensorData")

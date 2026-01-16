@@ -49,6 +49,18 @@ resource "azurerm_storage_container" "functions" {
   container_access_type = "private"
 }
 
+# Storage Table for Sensor Data
+resource "azurerm_storage_table" "sensor_data" {
+  name                 = "SensorData"
+  storage_account_name = azurerm_storage_account.main.name
+}
+
+# Storage Table for Devices
+resource "azurerm_storage_table" "devices" {
+  name                 = "Devices"
+  storage_account_name = azurerm_storage_account.main.name
+}
+
 # App Service Plan for Azure Functions
 resource "azurerm_service_plan" "main" {
   name                = "${var.project_name}-asp-${var.environment}"

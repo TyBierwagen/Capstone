@@ -227,26 +227,33 @@ function resetSensorDisplay() {
   });
 }
 
+function updateValueIfIdExists(id, value, isTimestamp = false) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  
+  if (isTimestamp) {
+    el.textContent = formatTimestamp(value);
+  } else {
+    el.textContent = value;
+  }
+}
+
 function updateSensorDisplay(payload) {
-  document.getElementById('moisture').textContent = formatValue(payload.moisture, 1);
-  document.getElementById('temperature').textContent = formatValue(payload.temperature, 1);
-  document.getElementById('humidity').textContent = formatValue(payload.humidity, 1);
-  document.getElementById('ph').textContent = formatValue(payload.ph, 2);
-  document.getElementById('light').textContent = payload.light ?? '--';
-  document.getElementById('lastUpdated').textContent = formatTimestamp(payload.timestamp);
-  document.getElementById('commandStatus').textContent = payload.commandStatus ?? 'idle';
+  updateValueIfIdExists('moisture', formatValue(payload.moisture, 1));
+  updateValueIfIdExists('temperature', formatValue(payload.temperature, 1));
+  updateValueIfIdExists('humidity', formatValue(payload.humidity, 1));
+  updateValueIfIdExists('ph', formatValue(payload.ph, 2));
+  updateValueIfIdExists('light', payload.light ?? '--');
+  updateValueIfIdExists('lastUpdated', payload.timestamp, true);
+  updateValueIfIdExists('commandStatus', payload.commandStatus ?? 'idle');
 }
 
 function updateDeviceInfo(payload) {
   const device = payload.device ?? {};
-  document.getElementById('deviceStatus').textContent = device.status ?? 'unknown';
-  document.getElementById('deviceType').textContent = device.type ?? 'soil_sensor';
-  document.getElementById('deviceRegistered').textContent = device.registeredAt
-    ? formatTimestamp(device.registeredAt)
-    : '--';
-  document.getElementById('deviceLastSeen').textContent = device.lastSeen
-    ? formatTimestamp(device.lastSeen)
-    : '--';
+  updateValueIfIdExists('deviceStatus', device.status ?? 'unknown');
+  updateValueIfIdExists('deviceType', device.type ?? 'soil_sensor');
+  updateValueIfIdExists('deviceRegistered', device.registeredAt, true);
+  updateValueIfIdExists('deviceLastSeen', device.lastSeen, true);
 }
 
 function updateActiveIp() {
