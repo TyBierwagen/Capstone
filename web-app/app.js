@@ -90,8 +90,8 @@ function updateChart(history) {
     const d = new Date(h.timestamp);
     if (isNaN(d.getTime())) return '';
     
-    // Always show month and day for context as requested
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + 
+    // Always show month, day, and year for context as requested
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: '2-digit' }) + ' ' + 
            d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   });
   
