@@ -9,6 +9,13 @@ const state = {
 document.addEventListener('DOMContentLoaded', () => {
   const savedIp = localStorage.getItem('deviceIp');
   document.getElementById('deviceIp').value = savedIp || '';
+  
+  // Update copyright year
+  const yearSpan = document.getElementById('copyrightYear');
+  if (yearSpan) {
+    yearSpan.textContent = new Date().getFullYear();
+  }
+
   updateConnectionStatus(false);
   addLogEntry('Dashboard ready');
 });
