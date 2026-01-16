@@ -150,10 +150,9 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
     now = datetime.datetime.utcnow()
     since = None
     if timescale == "1h": since = now - datetime.timedelta(hours=1)
-    elif timescale == "12h": since = now - datetime.timedelta(hours=12)
-    elif timescale == "24h": since = now - datetime.timedelta(hours=24)
-    elif timescale == "3d": since = now - datetime.timedelta(days=3)
-    elif timescale == "7d": since = now - datetime.timedelta(days=7)
+    elif timescale == "1d": since = now - datetime.timedelta(days=1)
+    elif timescale == "1m": since = now - datetime.timedelta(days=30)
+    elif timescale == "1y": since = now - datetime.timedelta(days=365)
 
     if since:
         filters.append(f"RowKey ge '{since.timestamp()}_0'")
@@ -252,7 +251,7 @@ def register_device(req: func.HttpRequest) -> func.HttpResponse:
 
 
 @app.function_name("postSensorData")
-@app.route(route="sensor-data", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="sensor-data", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
 def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("Saving sensor data")
 
@@ -272,7 +271,7 @@ def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
 
 
 @app.function_name("getSensorData")
-@app.route(route="sensor-data", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="sensor-data", methods=["GET"], auth_level=func.AuthLevel.FUNCTION)
 def get_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
     device_ip = req.params.get("deviceIp")
     device_id = req.params.get("deviceId")
@@ -296,7 +295,7 @@ def get_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
 
 
 @app.function_name("queueControlCommand")
-@app.route(route="control", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="control", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
 def queue_control_command(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("Control command request")
 
@@ -317,7 +316,7 @@ def queue_control_command(req: func.HttpRequest) -> func.HttpResponse:
 
 
 @app.function_name("getControlCommand")
-@app.route(route="control", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="control", methods=["GET"], auth_level=func.AuthLevel.FUNCTION)
 def get_control_command(req: func.HttpRequest) -> func.HttpResponse:
     device_ip = req.params.get("deviceIp")
 

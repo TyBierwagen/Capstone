@@ -65,3 +65,9 @@ variable "tags" {
     Environment = "Development"
   }
 }
+
+variable "allowed_origins" {
+  description = "Static list of allowed CORS origins"
+  type        = list(string)
+  default     = ["https://portal.azure.com"]
+}

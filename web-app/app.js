@@ -1,16 +1,49 @@
-const API_BASE_URL = 'https://soilrobot-func-dev.azurewebsites.net/api';
+const PROD_API_URL = 'https://soilrobot-func-dev.azurewebsites.net/api';
+const LOCAL_API_URL = 'http://localhost:7071/api';
 
 const state = {
   isConnected: false,
+  useProd: true,
   deviceIp: '',
   refreshIntervalId: null,
   chart: null,
+  tempUnit: 'C',
+  latestData: null,
+  historyData: null,
+  lastTimescale: '1h'
 };
+
+function getApiBaseUrl() {
+  return state.useProd ? PROD_API_URL : LOCAL_API_URL;
+}
 
 document.addEventListener('DOMContentLoaded', () => {
   const savedIp = localStorage.getItem('deviceIp');
   document.getElementById('deviceIp').value = savedIp || '';
   
+  const savedKey = localStorage.getItem('functionKey');
+  if (savedKey) {
+    document.getElementById('functionKey').value = savedKey;
+  }
+
+  const savedUnit = localStorage.getItem('tempUnit');
+  if (savedUnit) {
+    state.tempUnit = savedUnit;
+    const toggle = document.getElementById('tempUnitToggle');
+    if (toggle) toggle.checked = savedUnit === 'F';
+    
+    // Update UI toggle labels
+    const tempUnitEl = document.querySelector('#temperature')?.nextElementSibling;
+    if (tempUnitEl) tempUnitEl.textContent = savedUnit === 'F' ? '°F' : '°C';
+  }
+
+  const savedUseProd = localStorage.getItem('useProd');
+  if (savedUseProd !== null) {
+    state.useProd = savedUseProd === 'true';
+  }
+  const apiToggle = document.getElementById('apiSourceToggle');
+  if (apiToggle) apiToggle.checked = state.useProd;
+
   // Update copyright year
   const yearSpan = document.getElementById('copyrightYear');
   if (yearSpan) {
@@ -24,6 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initChart() {
   const ctx = document.getElementById('sensorChart').getContext('2d');
+  const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
   state.chart = new Chart(ctx, {
     type: 'line',
     data: {
@@ -38,7 +72,7 @@ function initChart() {
           yAxisID: 'y',
         },
         {
-          label: 'Temp (°C)',
+          label: `Temp (${unitLabel})`,
           borderColor: '#f87171',
           data: [],
           tension: 0.3,
@@ -73,7 +107,7 @@ function initChart() {
           position: 'right',
           grid: { drawOnChartArea: false },
           ticks: { color: '#f87171' },
-          title: { display: true, text: 'Temp °C', color: '#f87171' }
+          title: { display: true, text: `Temp (${unitLabel})`, color: '#f87171' }
         }
       }
     }
@@ -83,9 +117,16 @@ function initChart() {
 function updateChart(history, timescale = '1h') {
   if (!state.chart || !history) return;
 
+  state.historyData = history;
+  state.lastTimescale = timescale;
+
   // Sort history by time (ascending) for the chart
   const sorted = [...history].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
   
+  const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
+  state.chart.options.scales.y1.title.text = `Temp (${unitLabel})`;
+  state.chart.data.datasets[1].label = `Temp (${unitLabel})`;
+
   state.chart.data.labels = sorted.map(h => {
     const d = new Date(h.timestamp);
     if (isNaN(d.getTime())) return '';
@@ -94,16 +135,19 @@ function updateChart(history, timescale = '1h') {
     
     if (timescale === '1h') {
       return timeStr;
-    } else if (timescale === '12h' || timescale === '24h') {
+    } else if (timescale === '1d') {
       return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + timeStr;
     } else {
-      // 3d, 7d, all scales include year
+      // 1m, 1y, all
       return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: '2-digit' }) + ' ' + timeStr;
     }
   });
   
   state.chart.data.datasets[0].data = sorted.map(h => h.humidity);
-  state.chart.data.datasets[1].data = sorted.map(h => h.temperature);
+  state.chart.data.datasets[1].data = sorted.map(h => {
+    const temp = h.temperature;
+    return (state.tempUnit === 'F' && temp !== null) ? (temp * 9/5) + 32 : temp;
+  });
   state.chart.update('none'); // Update without animation for performance
 }
 
@@ -119,6 +163,34 @@ function toggleIpFilter() {
       addLogEntry('Switching to global telemetry');
       refreshData();
     }
+  }
+}
+
+function toggleTempUnit() {
+  state.tempUnit = document.getElementById('tempUnitToggle').checked ? 'F' : 'C';
+  localStorage.setItem('tempUnit', state.tempUnit);
+  addLogEntry(`Units changed to °${state.tempUnit}`);
+  
+  // Update unit labels immediately
+  const tempValueEl = document.getElementById('temperature');
+  if (tempValueEl && tempValueEl.nextElementSibling) {
+    tempValueEl.nextElementSibling.textContent = state.tempUnit === 'F' ? '°F' : '°C';
+  }
+
+  if (state.latestData) {
+    updateSensorDisplay(state.latestData);
+  }
+  if (state.historyData) {
+    updateChart(state.historyData, state.lastTimescale);
+  }
+}
+
+function toggleApiSource() {
+  state.useProd = document.getElementById('apiSourceToggle').checked;
+  localStorage.setItem('useProd', state.useProd);
+  addLogEntry(`Switched to ${state.useProd ? 'Production' : 'Local'} API`);
+  if (state.isConnected) {
+    refreshData();
   }
 }
 
@@ -178,18 +250,25 @@ async function refreshData() {
   }
 
   try {
+    const baseUrl = getApiBaseUrl();
     const timescale = document.getElementById('timeScale')?.value || '1h';
     const params = new URLSearchParams();
     if (state.deviceIp) params.append('deviceIp', state.deviceIp);
     
+    const headers = { 'cache': 'no-store' };
+    const apiKey = localStorage.getItem('functionKey');
+    if (apiKey) {
+      headers['headers'] = { 'x-functions-key': apiKey };
+    }
+    
     // Fetch latest for the top cards
-    const latestResponse = await fetch(`${API_BASE_URL}/sensor-data?${params.toString()}`, { cache: 'no-store' });
+    const latestResponse = await fetch(`${baseUrl}/sensor-data?${params.toString()}`, headers);
     
     // Fetch history for the graph
     const historyParams = new URLSearchParams(params);
     historyParams.append('history', 'true');
     historyParams.append('timescale', timescale);
-    const historyResponse = await fetch(`${API_BASE_URL}/sensor-data?${historyParams.toString()}`, { cache: 'no-store' });
+    const historyResponse = await fetch(`${baseUrl}/sensor-data?${historyParams.toString()}`, headers);
 
     if (latestResponse.status === 404) {
       const mode = state.deviceIp ? `device ${state.deviceIp}` : 'any device';
@@ -256,8 +335,19 @@ function updateValueIfIdExists(id, value, isTimestamp = false) {
 }
 
 function updateSensorDisplay(payload) {
+  if (!payload) return;
+  state.latestData = payload;
+
   updateValueIfIdExists('moisture', formatValue(payload.moisture, 1));
-  updateValueIfIdExists('temperature', formatValue(payload.temperature, 1));
+  
+  const tempValue = (state.tempUnit === 'F' && payload.temperature !== null) 
+    ? (payload.temperature * 9 / 5) + 32 
+    : payload.temperature;
+    
+  updateValueIfIdExists('temperature', formatValue(tempValue, 1));
+  const tempUnitEl = document.querySelector('#temperature')?.nextElementSibling;
+  if (tempUnitEl) tempUnitEl.textContent = state.tempUnit === 'F' ? '°F' : '°C';
+
   updateValueIfIdExists('humidity', formatValue(payload.humidity, 1));
   updateValueIfIdExists('ph', formatValue(payload.ph, 2));
   updateValueIfIdExists('light', payload.light ?? '--');
@@ -277,6 +367,11 @@ function updateActiveIp() {
   if (state.isConnected) {
     state.deviceIp = document.getElementById('deviceIp').value.trim();
   }
+}
+
+function updateActiveKey() {
+  const key = document.getElementById('functionKey').value.trim();
+  localStorage.setItem('functionKey', key);
 }
 
 function formatValue(value, precision) {

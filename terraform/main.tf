@@ -169,6 +169,13 @@ resource "azurerm_linux_function_app" "main" {
     application_stack {
       python_version = "3.11"
     }
+    cors {
+      allowed_origins = concat(
+        var.allowed_origins,
+        var.environment == "dev" ? ["http://localhost:5500", "http://127.0.0.1:5500"] : []
+      )
+      support_credentials = false
+    }
   }
 
   app_settings = {

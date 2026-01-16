@@ -1,0 +1,123 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <DHT.h>
+
+// Wi-Fi credentials
+const char* ssid = "SSID_NAME";
+const char* password = "PASSWORD";
+
+// Function App endpoint used during testing so we bypass APIM
+const char* sensorApiUrl = "https://your-function-app.azurewebsites.net/api/sensor-data";
+const char* functionKey = "YOUR_FUNCTION_KEY_HERE";
+
+// DHT11 on pin 15
+#define DHT_PIN 15
+#define DHT_TYPE DHT11
+const unsigned long SAMPLE_INTERVAL_MS = 60UL * 1000UL;
+bool sendsleepmsg = false;
+String deviceId;
+String deviceIp;
+unsigned long lastSampleTime = 0;
+DHT dht(DHT_PIN, DHT_TYPE);
+
+void setup() {
+  Serial.begin(115200);
+  delay(500);
+  dht.begin();
+  connectToWiFi();
+  deviceId = WiFi.macAddress();
+  deviceIp = WiFi.localIP().toString();
+  Serial.println("=== ESP32 DHT11 Sensor ===");
+  Serial.print("Device: ");
+  Serial.println(deviceId);
+  Serial.print("Reporting to: ");
+  Serial.println(sensorApiUrl);
+  Serial.println("Setup complete, entering loop");
+}
+
+void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    connectToWiFi();
+    return;
+  }
+  sendsleepmsg= false;
+  if (millis() - lastSampleTime >= SAMPLE_INTERVAL_MS) {
+    readAndSend();
+    lastSampleTime = millis();
+    sendsleepmsg= true;
+  }
+  if (sendsleepmsg) {
+    Serial.println("Sleeping until next sample");
+  }
+  
+  delay(250);
+}
+
+void connectToWiFi() {
+  Serial.print("Connecting to Wi-Fi: ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 30000) {
+    delay(500);
+    Serial.print('.');
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    deviceIp = WiFi.localIP().toString();
+    Serial.println("\nWi-Fi connected");
+    Serial.print("IP: ");
+    Serial.println(deviceIp);
+    Serial.println("Wi-Fi connection established");
+  } else {
+    Serial.println("\nFailed to join Wi-Fi, retrying later");
+  }
+}
+
+void readAndSend() {
+  float humidity = dht.readHumidity();
+  float temperature = dht.readTemperature();
+  if (isnan(humidity) || isnan(temperature)) {
+    Serial.println("Failed to read from DHT sensor");
+    return;
+  }
+  Serial.println("\nCaptured reading:");
+  Serial.print("  Temperature: ");
+  Serial.print(temperature);
+  Serial.println(" °C");
+  Serial.print("  Humidity: ");
+  Serial.print(humidity);
+  Serial.println(" %");
+  sendToApi(temperature, humidity);
+}
+
+void sendToApi(float temperature, float humidity) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Wi-Fi lost before upload");
+    return;
+  }
+  HTTPClient http;
+  http.begin(sensorApiUrl);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("x-functions-key", functionKey);
+  StaticJsonDocument<256> payload;
+  payload["deviceId"] = deviceId;
+  payload["deviceIp"] = deviceIp;
+  payload["temperature"] = temperature;
+  payload["humidity"] = humidity;
+  payload["timestamp"] = millis();
+  String body;
+  serializeJson(payload, body);
+  Serial.print("Uploading payload: ");
+  Serial.println(body);
+  int response = http.POST(body);
+  if (response > 0) {
+    Serial.print("Upload HTTP status: ");
+    Serial.println(response);
+  } else {
+    Serial.print("Upload failed: ");
+    Serial.println(http.errorToString(response));
+  }
+  http.end();
+  Serial.println("HTTP connection closed");
+}
