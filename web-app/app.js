@@ -30,7 +30,7 @@ function initChart() {
       labels: [],
       datasets: [
         {
-          label: 'Moisture (%)',
+          label: 'Humidity (%)',
           borderColor: '#3b82f6',
           backgroundColor: 'rgba(59, 130, 246, 0.1)',
           data: [],
@@ -65,7 +65,7 @@ function initChart() {
           position: 'left',
           grid: { color: 'rgba(255,255,255,0.05)' },
           ticks: { color: '#3b82f6' },
-          title: { display: true, text: 'Moisture %', color: '#3b82f6' }
+          title: { display: true, text: 'Humidity %', color: '#3b82f6' }
         },
         y1: {
           type: 'linear',
@@ -104,7 +104,7 @@ function updateChart(history) {
            d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   });
   
-  state.chart.data.datasets[0].data = sorted.map(h => h.moisture);
+  state.chart.data.datasets[0].data = sorted.map(h => h.humidity);
   state.chart.data.datasets[1].data = sorted.map(h => h.temperature);
   state.chart.update('none'); // Update without animation for performance
 }
