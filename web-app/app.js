@@ -180,7 +180,7 @@ async function refreshData() {
   }
 
   try {
-    const limit = document.getElementById('timeLimit')?.value || '50';
+    const timescale = document.getElementById('timeScale')?.value || '1h';
     const params = new URLSearchParams();
     if (state.deviceIp) params.append('deviceIp', state.deviceIp);
     
@@ -190,7 +190,7 @@ async function refreshData() {
     // Fetch history for the graph
     const historyParams = new URLSearchParams(params);
     historyParams.append('history', 'true');
-    historyParams.append('limit', limit);
+    historyParams.append('timescale', timescale);
     const historyResponse = await fetch(`${API_BASE_URL}/sensor-data?${historyParams.toString()}`, { cache: 'no-store' });
 
     if (latestResponse.status === 404) {
@@ -211,7 +211,8 @@ async function refreshData() {
       updateChart(historyData.history);
     }
     
-    addLogEntry(`Telemetry synced (${limit} pts)`);
+    const scaleLabel = document.querySelector(`#timeScale option[value="${timescale}"]`)?.textContent || timescale;
+    addLogEntry(`Synced data for ${scaleLabel}`);
   } catch (error) {
     console.error('Refresh error', error);
     showAlert('Unable to reach the API', 'error');

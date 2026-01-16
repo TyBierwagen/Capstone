@@ -132,14 +132,28 @@ def fetch_latest_sensor_entry(device_ip: Optional[str] = None, device_id: Option
     return {**dict(latest), "device": dict(device) if device else None}
 
 
-def fetch_sensor_history(device_ip: Optional[str] = None, device_id: Optional[str] = None, limit: int = 100) -> list:
+def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h", limit: int = 100) -> list:
     client = get_table_client("SensorData")
     if not client:
         return []
 
-    query = ""
+    filters = []
     if device_ip:
-        query = f"PartitionKey eq '{device_ip.replace('.', '_')}'"
+        filters.append(f"PartitionKey eq '{device_ip.replace('.', '_')}'")
+    
+    # Time window filtering if timescale is specific
+    now = datetime.datetime.utcnow()
+    since = None
+    if timescale == "1h": since = now - datetime.timedelta(hours=1)
+    elif timescale == "12h": since = now - datetime.timedelta(hours=12)
+    elif timescale == "24h": since = now - datetime.timedelta(hours=24)
+    elif timescale == "3d": since = now - datetime.timedelta(days=3)
+    elif timescale == "7d": since = now - datetime.timedelta(days=7)
+
+    if since:
+        filters.append(f"RowKey ge '{since.timestamp()}_0'")
+
+    query = " and ".join(filters) if filters else ""
         
     try:
         entities = list(client.query_entities(query_filter=query))
@@ -147,8 +161,37 @@ def fetch_sensor_history(device_ip: Optional[str] = None, device_id: Optional[st
         logging.error(f"Table query error: {e}")
         return []
         
-    history = sorted(entities, key=lambda x: str(x.get("timestamp", "")), reverse=True)[:limit]
-    return list(reversed([dict(e) for e in history]))
+    # Sort chronological
+    raw_history = sorted([dict(e) for e in entities], key=lambda x: str(x.get("timestamp", "")))
+    
+    # If we have too many points, aggregate them to ~60 points for the chart
+    target_points = 60
+    if len(raw_history) <= target_points or timescale == "1h":
+        return raw_history[-limit:] if timescale == "all" else raw_history
+
+    # Simple bucket aggregation
+    chunk_size = len(raw_history) // target_points
+    aggregated = []
+    for i in range(0, len(raw_history), chunk_size):
+        chunk = raw_history[i:i + chunk_size]
+        if not chunk: continue
+        
+        def avg(key):
+            vals = [c[key] for c in chunk if c.get(key) is not None and isinstance(c[key], (int, float))]
+            return round(sum(vals) / len(vals), 2) if vals else None
+
+        aggregated.append({
+            "timestamp": chunk[-1]["timestamp"],
+            "moisture": avg("moisture"),
+            "temperature": avg("temperature"),
+            "humidity": avg("humidity"),
+            "ph": avg("ph"),
+            "light": avg("light"),
+            "deviceIp": chunk[0].get("deviceIp"),
+            "isAggregated": True
+        })
+    
+    return aggregated[:target_points + 5]
 
 
 _control_commands: dict = {} # Keep commands in-memory for now as they are transient
@@ -231,9 +274,10 @@ def get_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
     is_history = parse_bool(req.params.get("history"), False)
 
     if is_history:
+        timescale = req.params.get("timescale", "1h")
         limit = int(req.params.get("limit", 100))
-        data = fetch_sensor_history(device_ip=device_ip, device_id=device_id, limit=limit)
-        return json_response({"count": len(data), "history": data})
+        data = fetch_sensor_history(device_ip=device_ip, timescale=timescale, limit=limit)
+        return json_response({"count": len(data), "history": data, "timescale": timescale})
 
     entry = fetch_latest_sensor_entry(device_ip=device_ip, device_id=device_id)
 
