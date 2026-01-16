@@ -72,20 +72,25 @@ def persist_device(device_id: str, ip_address: str, port: int, device_type: str)
 
 def store_sensor_entry(payload: dict) -> dict:
     # Use server time consistently for SensorData to ensure reliable charting
-    # Microcontrollers often send relative uptime (millis) which breaks absolute time history
-    timestamp = now_iso()
+    now = datetime.datetime.utcnow()
+    timestamp = now.replace(microsecond=0).isoformat() + "Z"
     device_ip = payload.get("deviceIp", "unknown")
     
     entry = {
         "PartitionKey": device_ip.replace(".", "_"),
-        "RowKey": f"{datetime.datetime.utcnow().timestamp()}_{uuid.uuid4().hex[:8]}",
+        "RowKey": f"{now.timestamp()}_{uuid.uuid4().hex[:8]}",
         "deviceIp": device_ip,
         "deviceId": payload.get("deviceId"),
         "commandStatus": payload.get("commandStatus"),
         "timestamp": timestamp,
-        "moisture": payload.get("moisture"),
-        "temperature": payload.get("temperature"),
+        # Date breakdown fields for easier table inspection
+        "year": now.year,
+        "month": now.month,
+        "day": now.day,
+        "hour": now.hour,
         "humidity": payload.get("humidity"),
+        "temperature": payload.get("temperature"),
+        "moisture": payload.get("moisture"),
         "ph": payload.get("ph"),
         "light": payload.get("light"),
     }
