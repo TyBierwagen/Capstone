@@ -90,16 +90,7 @@ function updateChart(history) {
     const d = new Date(h.timestamp);
     if (isNaN(d.getTime())) return '';
     
-    // Check if it's today
-    const today = new Date();
-    const isToday = d.getDate() === today.getDate() && 
-                    d.getMonth() === today.getMonth() && 
-                    d.getFullYear() === today.getFullYear();
-    
-    if (isToday) {
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    }
-    // For other days, include the date
+    // Always show month and day for context as requested
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + 
            d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   });
