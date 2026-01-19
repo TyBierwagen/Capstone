@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const savedKey = localStorage.getItem('functionKey');
   if (savedKey) {
     document.getElementById('functionKey').value = savedKey;
+    updateActiveKey();
   }
 
   const savedUnit = localStorage.getItem('tempUnit');
@@ -259,12 +260,12 @@ async function refreshData() {
     const fetchOptions = {
       method: 'GET',
       mode: 'cors',
-      cache: 'no-store',
-      headers: {}
+      cache: 'no-store'
     };
 
     if (apiKey) {
-      fetchOptions.headers['x-functions-key'] = apiKey;
+      // Send the function key as a query parameter to avoid CORS preflight
+      params.append('code', apiKey);
     }
     
     // Fetch latest for the top cards
@@ -275,6 +276,12 @@ async function refreshData() {
     historyParams.append('history', 'true');
     historyParams.append('timescale', timescale);
     const historyResponse = await fetch(`${baseUrl}/sensor-data?${historyParams.toString()}`, fetchOptions);
+
+    if (latestResponse.status === 401) {
+      showAlert('Unauthorized: Function key missing or invalid.', 'error');
+      addLogEntry('Unauthorized (401) from API');
+      return;
+    }
 
     if (latestResponse.status === 404) {
       const mode = state.deviceIp ? `device ${state.deviceIp}` : 'any device';
@@ -378,6 +385,16 @@ function updateActiveIp() {
 function updateActiveKey() {
   const key = document.getElementById('functionKey').value.trim();
   localStorage.setItem('functionKey', key);
+  const hint = document.getElementById('functionKeyHint');
+  const maskedEl = document.getElementById('maskedKey');
+  if (key) {
+    const masked = '••••••' + key.slice(-4);
+    if (maskedEl) maskedEl.textContent = masked;
+    if (hint) hint.style.display = 'block';
+  } else {
+    if (hint) hint.style.display = 'none';
+    if (maskedEl) maskedEl.textContent = '';
+  }
 }
 
 function formatValue(value, precision) {
