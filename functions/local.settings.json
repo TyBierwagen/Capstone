@@ -2,6 +2,10 @@
   "IsEncrypted": false,
   "Values": {
     "FUNCTIONS_WORKER_RUNTIME": "python",
-    "AzureWebJobsStorage": ""
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true"
+  },
+  "Host": {
+    "LocalHttpPort": 5500,
+    "CORS": "*"
   }
 }

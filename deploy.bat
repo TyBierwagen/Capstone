@@ -93,8 +93,9 @@ echo Web application deployed
 REM Deploy Azure Functions
 echo Deploying Azure Functions...
 cd functions
-call npm install
-call func azure functionapp publish "%FUNCTION_APP%" --node
+REM For Python apps, we use pip instead of npm
+python -m pip install -r requirements.txt
+func azure functionapp publish "%FUNCTION_APP%" --python
 
 cd ..
 

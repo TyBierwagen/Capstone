@@ -69,5 +69,5 @@ variable "tags" {
 variable "allowed_origins" {
   description = "Static list of allowed CORS origins"
   type        = list(string)
-  default     = ["https://portal.azure.com"]
+  default     = ["https://portal.azure.com", "http://localhost:5500", "http://127.0.0.1:5500", "https://soil.tybierwagen.com"]
 }

@@ -99,8 +99,8 @@ echo -e "${GREEN}✅ Web application deployed${NC}"
 # Deploy Azure Functions
 echo "⚡ Deploying Azure Functions..."
 cd functions
-npm install --silent
-func azure functionapp publish "$FUNCTION_APP" --node
+pip install -r requirements.txt --quiet
+func azure functionapp publish "$FUNCTION_APP" --python
 
 cd ..
 

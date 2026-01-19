@@ -96,13 +96,113 @@ resource "azurerm_api_management_api" "main" {
   subscription_required = false
 }
 
+resource "azurerm_api_management_api_policy" "main" {
+  api_name            = azurerm_api_management_api.main.name
+  api_management_name = azurerm_api_management.main.name
+  resource_group_name = azurerm_resource_group.main.name
+
+  xml_content = <<XML
+<policies>
+    <inbound>
+        <cors>
+            <allowed-origins>
+                <origin>*</origin>
+            </allowed-origins>
+            <allowed-methods>
+                <method>GET</method>
+                <method>POST</method>
+                <method>OPTIONS</method>
+            </allowed-methods>
+            <allowed-headers>
+                <header>*</header>
+            </allowed-headers>
+        </cors>
+        <base />
+        <set-backend-service backend-id="${azurerm_api_management_backend.functions.name}" />
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>
+XML
+}
+
+# API Management Operations
+resource "azurerm_api_management_api_operation" "get_sensor_data" {
+  operation_id        = "get-sensor-data"
+  api_name            = azurerm_api_management_api.main.name
+  api_management_name = azurerm_api_management.main.name
+  resource_group_name = azurerm_api_management_api.main.resource_group_name
+  display_name        = "Get Sensor Data"
+  method              = "GET"
+  url_template        = "/sensor-data"
+  description         = "Retrieve sensor readings"
+}
+
+resource "azurerm_api_management_api_operation" "post_sensor_data" {
+  operation_id        = "post-sensor-data"
+  api_name            = azurerm_api_management_api.main.name
+  api_management_name = azurerm_api_management.main.name
+  resource_group_name = azurerm_api_management_api.main.resource_group_name
+  display_name        = "Post Sensor Data"
+  method              = "POST"
+  url_template        = "/sensor-data"
+  description         = "Submit new sensor readings"
+}
+
+resource "azurerm_api_management_api_operation" "get_control" {
+  operation_id        = "get-control"
+  api_name            = azurerm_api_management_api.main.name
+  api_management_name = azurerm_api_management.main.name
+  resource_group_name = azurerm_api_management_api.main.resource_group_name
+  display_name        = "Get Control Commands"
+  method              = "GET"
+  url_template        = "/control"
+}
+
+resource "azurerm_api_management_api_operation" "post_control" {
+  operation_id        = "post-control"
+  api_name            = azurerm_api_management_api.main.name
+  api_management_name = azurerm_api_management.main.name
+  resource_group_name = azurerm_api_management_api.main.resource_group_name
+  display_name        = "Send Control Command"
+  method              = "POST"
+  url_template        = "/control"
+}
+
+resource "azurerm_api_management_api_operation" "health" {
+  operation_id        = "health-check"
+  api_name            = azurerm_api_management_api.main.name
+  api_management_name = azurerm_api_management.main.name
+  resource_group_name = azurerm_api_management_api.main.resource_group_name
+  display_name        = "Health Check"
+  method              = "GET"
+  url_template        = "/health"
+}
+
 # API Management Backend for Azure Functions
 resource "azurerm_api_management_backend" "functions" {
   name                = "functions-backend"
   resource_group_name = azurerm_resource_group.main.name
   api_management_name = azurerm_api_management.main.name
   protocol            = "http"
-  url                 = "https://${azurerm_linux_function_app.main.default_hostname}"
+  url                 = "https://${azurerm_linux_function_app.main.default_hostname}/api"
+}
+
+# Log Analytics Workspace for Application Insights
+resource "azurerm_log_analytics_workspace" "main" {
+  name                = "${var.project_name}-law-${var.environment}"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
+  tags                = var.tags
 }
 
 # Application Insights for monitoring
@@ -110,8 +210,16 @@ resource "azurerm_application_insights" "main" {
   name                = "${var.project_name}-appinsights-${var.environment}"
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
+  workspace_id        = azurerm_log_analytics_workspace.main.id
   application_type    = "web"
-  #workspace_id        = "/subscriptions/c266ae67-f775-42f4-a754-ec0b46ac7811/resourceGroups/DefaultResourceGroup-WUS/providers/Microsoft.OperationalInsights/workspaces/DefaultWorkspace-c266ae67-f775-42f4-a754-ec0b46ac7811-WUS"
+  
+  lifecycle {
+    ignore_changes = [
+      # Ignore daily_data_cap_in_gb as it can be modified by Azure policies
+      daily_data_cap_in_gb,
+    ]
+  }
+
   tags = var.tags
 }
 
@@ -170,18 +278,17 @@ resource "azurerm_linux_function_app" "main" {
       python_version = "3.11"
     }
     cors {
-      allowed_origins = concat(
-        var.allowed_origins,
-        var.environment == "dev" ? ["http://localhost:5500", "http://127.0.0.1:5500"] : []
-      )
+      allowed_origins     = var.allowed_origins
       support_credentials = false
     }
   }
 
   app_settings = {
-    FUNCTIONS_WORKER_RUNTIME = "python"
-    WEBSITE_RUN_FROM_PACKAGE = "1"
-    # Don't reference Key Vault secret here initially - causes cycle
+    FUNCTIONS_WORKER_RUNTIME       = "python"
+    FUNCTIONS_EXTENSION_VERSION    = "~4"
+    WEBSITE_RUN_FROM_PACKAGE       = "1"
+    AzureWebJobsStorage            = azurerm_storage_account.main.primary_connection_string
+    STORAGE_CONNECTION_STRING      = azurerm_storage_account.main.primary_connection_string
   }
   
   lifecycle {

@@ -1,4 +1,4 @@
-const PROD_API_URL = 'https://soilrobot-func-dev.azurewebsites.net/api';
+const PROD_API_URL = 'https://soilrobot-apim-dev.azure-api.net/api';
 const LOCAL_API_URL = 'http://localhost:7071/api';
 
 const state = {
@@ -255,20 +255,26 @@ async function refreshData() {
     const params = new URLSearchParams();
     if (state.deviceIp) params.append('deviceIp', state.deviceIp);
     
-    const headers = { 'cache': 'no-store' };
     const apiKey = localStorage.getItem('functionKey');
+    const fetchOptions = {
+      method: 'GET',
+      mode: 'cors',
+      cache: 'no-store',
+      headers: {}
+    };
+
     if (apiKey) {
-      headers['headers'] = { 'x-functions-key': apiKey };
+      fetchOptions.headers['x-functions-key'] = apiKey;
     }
     
     // Fetch latest for the top cards
-    const latestResponse = await fetch(`${baseUrl}/sensor-data?${params.toString()}`, headers);
+    const latestResponse = await fetch(`${baseUrl}/sensor-data?${params.toString()}`, fetchOptions);
     
     // Fetch history for the graph
     const historyParams = new URLSearchParams(params);
     historyParams.append('history', 'true');
     historyParams.append('timescale', timescale);
-    const historyResponse = await fetch(`${baseUrl}/sensor-data?${historyParams.toString()}`, headers);
+    const historyResponse = await fetch(`${baseUrl}/sensor-data?${historyParams.toString()}`, fetchOptions);
 
     if (latestResponse.status === 404) {
       const mode = state.deviceIp ? `device ${state.deviceIp}` : 'any device';

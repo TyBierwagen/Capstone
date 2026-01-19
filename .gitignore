@@ -6,8 +6,8 @@
 *.tfvars
 override.tf
 override.tf.json
-microcontroller/microcontroller.ino
-microcontroller/microcontroller_test.ino
+microcontroller/mcu.ino
+microcontroller/mcu_test.ino
 microcontroller/soil_sensor.ino
 
 # Local environment files
