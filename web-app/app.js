@@ -334,7 +334,7 @@ function stopAutoRefresh() {
 }
 
 function resetSensorDisplay() {
-  ['moisture', 'temperature', 'humidity', 'ph', 'light', 'lastUpdated', 'commandStatus', 'deviceStatus', 'deviceType', 'deviceRegistered', 'deviceLastSeen'].forEach((id) => {
+  ['moisture', 'temperature', 'humidity', 'ph', 'light', 'lastUpdated', 'commandStatus', 'deviceStatus', 'deviceType', 'deviceLastSeen'].forEach((id) => {
     const el = document.getElementById(id);
     if (el) {
       el.textContent = '--';
@@ -376,9 +376,8 @@ function updateSensorDisplay(payload) {
 
 function updateDeviceInfo(payload) {
   const device = payload.device ?? {};
-  updateValueIfIdExists('deviceStatus', device.status ?? 'unknown');
+  updateValueIfIdExists('deviceStatus', device.status ?? 'online');
   updateValueIfIdExists('deviceType', device.type ?? 'soil_sensor');
-  updateValueIfIdExists('deviceRegistered', device.registeredAt, true);
   updateValueIfIdExists('deviceLastSeen', device.lastSeen, true);
 }
 

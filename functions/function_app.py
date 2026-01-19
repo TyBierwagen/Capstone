@@ -99,6 +99,17 @@ def store_sensor_entry(payload: dict) -> dict:
     if client:
         client.create_entity(entity=entry)
         
+    # Also update/ensure device entry exists
+    try:
+        persist_device(
+            payload.get("deviceId", "unknown"),
+            device_ip,
+            payload.get("port", 80),
+            payload.get("deviceType", "soil_sensor")
+        )
+    except Exception as e:
+        logging.error(f"Failed to auto-persist device: {e}")
+        
     logging.info("Sensor data recorded for %s", device_ip)
     return entry
 
