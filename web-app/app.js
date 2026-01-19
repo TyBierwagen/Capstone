@@ -283,6 +283,12 @@ async function refreshData() {
       return;
     }
 
+    if (latestResponse.status === 403) {
+      showAlert('Forbidden: Access denied. Check CORS or API Gateway settings.', 'error');
+      addLogEntry('Forbidden (403) from API - check origins');
+      return;
+    }
+
     if (latestResponse.status === 404) {
       const mode = state.deviceIp ? `device ${state.deviceIp}` : 'any device';
       showAlert(`No data found for ${mode}`, 'warning');

@@ -29,10 +29,10 @@ echo All prerequisites found
 
 REM Check Azure login
 echo Checking Azure login status...
-az account show >nul 2>nul
+call az account show >nul 2>nul
 if %ERRORLEVEL% NEQ 0 (
     echo Not logged in to Azure. Logging in...
-    az login
+    call az login
 )
 
 echo Logged in to Azure
@@ -50,26 +50,19 @@ if not exist "terraform.tfvars" (
 
 REM Initialize Terraform
 echo Initializing Terraform...
-terraform init
+call terraform init
 
 REM Validate configuration
 echo Validating Terraform configuration...
-terraform validate
+call terraform validate
 
 REM Plan deployment
 echo Planning infrastructure deployment...
-terraform plan -out=tfplan
-
-REM Confirm deployment
-set /p confirm="Do you want to deploy this infrastructure? (yes/no): "
-if not "%confirm%"=="yes" (
-    echo Deployment cancelled.
-    exit /b 0
-)
+call terraform plan -out=tfplan
 
 REM Apply Terraform
 echo Deploying infrastructure (this may take 10-15 minutes)...
-terraform apply tfplan
+call terraform apply tfplan
 
 REM Get outputs
 echo Getting deployment outputs...
@@ -82,7 +75,7 @@ cd ..
 
 REM Deploy Web Application
 echo Deploying web application...
-az storage blob upload-batch ^
+call az storage blob upload-batch ^
     --account-name "%STORAGE_ACCOUNT%" ^
     --source web-app ^
     --destination $web ^
@@ -95,7 +88,7 @@ echo Deploying Azure Functions...
 cd functions
 REM For Python apps, we use pip instead of npm
 python -m pip install -r requirements.txt
-func azure functionapp publish "%FUNCTION_APP%" --python
+call func azure functionapp publish "%FUNCTION_APP%" --python
 
 cd ..
 

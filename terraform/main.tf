@@ -107,15 +107,22 @@ resource "azurerm_api_management_api_policy" "main" {
         <cors>
             <allowed-origins>
                 <origin>*</origin>
+                <origin>http://localhost:5500</origin>
+                <origin>http://127.0.0.1:5500</origin>
             </allowed-origins>
             <allowed-methods>
                 <method>GET</method>
                 <method>POST</method>
                 <method>OPTIONS</method>
+                <method>PUT</method>
+                <method>DELETE</method>
             </allowed-methods>
             <allowed-headers>
                 <header>*</header>
             </allowed-headers>
+            <expose-headers>
+                <header>*</header>
+            </expose-headers>
         </cors>
         <base />
         <set-backend-service backend-id="${azurerm_api_management_backend.functions.name}" />
@@ -278,7 +285,7 @@ resource "azurerm_linux_function_app" "main" {
       python_version = "3.11"
     }
     cors {
-      allowed_origins     = var.allowed_origins
+      allowed_origins     = ["*"]
       support_credentials = false
     }
   }
@@ -289,6 +296,12 @@ resource "azurerm_linux_function_app" "main" {
     WEBSITE_RUN_FROM_PACKAGE       = "1"
     AzureWebJobsStorage            = azurerm_storage_account.main.primary_connection_string
     STORAGE_CONNECTION_STRING      = azurerm_storage_account.main.primary_connection_string
+    WEBSITE_CONTENTAZUREFILECONNECTIONSTRING = azurerm_storage_account.main.primary_connection_string
+    WEBSITE_CONTENTSHARE                     = "${var.project_name}-func-share"
+    APPINSIGHTS_INSTRUMENTATIONKEY = azurerm_application_insights.main.instrumentation_key
+    APPLICATIONINSIGHTS_CONNECTION_STRING = azurerm_application_insights.main.connection_string
+    ENABLE_ORYX_BUILD              = "true"
+    SCM_DO_BUILD_DURING_DEPLOYMENT = "true"
   }
   
   lifecycle {

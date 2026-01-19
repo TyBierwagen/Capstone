@@ -23,7 +23,7 @@ variable "environment" {
 variable "location" {
   description = "Azure region for resources"
   type        = string
-  default     = "weatus2"
+  default     = "westus2"
 }
 
 variable "sql_admin_username" {
