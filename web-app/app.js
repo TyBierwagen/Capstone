@@ -10,7 +10,9 @@ const state = {
   tempUnit: 'C',
   latestData: null,
   historyData: null,
-  lastTimescale: '1h'
+  lastTimescale: '1h',
+  // ordered list of visible dataset indices (queue behavior)
+  visibleOrder: []
 };
 
 function getApiBaseUrl() {
@@ -52,6 +54,35 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   initChart();
+
+  // Restore chart visibility preferences for humidity and temperature
+  const showHumiditySaved = localStorage.getItem('showHumidity');
+  const showTempSaved = localStorage.getItem('showTemperature');
+  const humidityCheckbox = document.getElementById('showHumidity');
+  const tempCheckbox = document.getElementById('showTemperature');
+  if (humidityCheckbox) humidityCheckbox.checked = (showHumiditySaved !== 'false');
+  if (tempCheckbox) tempCheckbox.checked = (showTempSaved !== 'false');
+  if (state.chart) {
+    // Build visibleOrder queue based on the checkbox order (DOM order used)
+    state.visibleOrder = [];
+    if (humidityCheckbox && humidityCheckbox.checked) state.visibleOrder.push(0);
+    if (tempCheckbox && tempCheckbox.checked) state.visibleOrder.push(1);
+
+    // Apply saved visibility to datasets, then rebuild axes
+    state.chart.data.datasets.forEach((d, i) => {
+      d.hidden = !state.visibleOrder.includes(i);
+      // ensure axisTitle is up to date
+      if (i === 1) {
+        const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
+        d.axisTitle = `Temp (${unitLabel})`;
+      }
+    });
+
+    rebalanceAssignedSides();
+    normalizeAxes();
+    state.chart.update('none');
+  }
+
   updateConnectionStatus(false);
   addLogEntry('Dashboard ready');
 });
@@ -70,14 +101,17 @@ function initChart() {
           backgroundColor: 'rgba(59, 130, 246, 0.1)',
           data: [],
           tension: 0.3,
-          yAxisID: 'y',
+          // meta used to build axis later
+          axisTitle: 'Humidity %',
+          axisColor: '#3b82f6'
         },
         {
           label: `Temp (${unitLabel})`,
           borderColor: '#f87171',
           data: [],
           tension: 0.3,
-          yAxisID: 'y1',
+          axisTitle: `Temp (${unitLabel})`,
+          axisColor: '#f87171'
         }
       ]
     },
@@ -86,33 +120,130 @@ function initChart() {
       maintainAspectRatio: false,
       plugins: {
         legend: {
-          labels: { color: '#cbd5f5' }
+          labels: {
+            color: '#cbd5f5',
+            // only include legend items for datasets that are currently visible
+            filter: function(legendItem, chartData) {
+              return !chartData.datasets[legendItem.datasetIndex].hidden;
+            }
+          }
         }
       },
       scales: {
         x: {
           grid: { color: 'rgba(255,255,255,0.05)' },
           ticks: { color: '#94a3b8' }
-        },
-        y: {
-          type: 'linear',
-          display: true,
-          position: 'left',
-          grid: { color: 'rgba(255,255,255,0.05)' },
-          ticks: { color: '#3b82f6' },
-          title: { display: true, text: 'Humidity %', color: '#3b82f6' }
-        },
-        y1: {
-          type: 'linear',
-          display: true,
-          position: 'right',
-          grid: { drawOnChartArea: false },
-          ticks: { color: '#f87171' },
-          title: { display: true, text: `Temp (${unitLabel})`, color: '#f87171' }
         }
       }
     }
   });
+}
+
+// --- Axis helpers: assign axis ids and positions (alternate starting on RIGHT) ---
+function getAxisId(index) {
+  return index === 0 ? 'y' : 'y' + index;
+}
+
+function getAxisPosition(index) {
+  // index 0 -> right, index 1 -> left, index 2 -> right, etc.
+  return (index % 2 === 0) ? 'right' : 'left';
+}
+
+function normalizeAxes() {
+  if (!state.chart) return;
+
+  const existingX = state.chart.options?.scales?.x || { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } };
+  const scales = { x: existingX };
+
+  // Determine first visible axis for grid drawing (only one axis should draw the grid area)
+  let firstVisibleFound = false;
+
+  state.chart.data.datasets.forEach((ds, i) => {
+    const axisId = getAxisId(i);
+    // prefer an assigned side if present; otherwise fall back to alternating by index
+    const pos = ds.assignedSide || getAxisPosition(i);
+    const axisColor = ds.axisColor || '#94a3b8';
+    const titleText = ds.axisTitle || ds.label || '';
+
+    // default grid drawOnChartArea only for the first visible axis we encounter
+    const drawOnChartArea = !firstVisibleFound;
+    if (!firstVisibleFound && !ds.hidden) firstVisibleFound = true;
+
+    // ensure dataset points at this axis
+    ds.yAxisID = axisId;
+    scales[axisId] = {
+      type: 'linear',
+      display: !ds.hidden,
+      position: pos,
+      grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: drawOnChartArea },
+      ticks: { color: axisColor },
+      title: { display: !ds.hidden, text: titleText, color: axisColor }
+    };
+  });
+
+  state.chart.options.scales = scales;
+}
+
+function countVisibleSides() {
+  let right = 0, left = 0;
+  state.chart.data.datasets.forEach((d, i) => {
+    if (d.hidden) return;
+    const side = d.assignedSide || getAxisPosition(i);
+    if (side === 'right') right++; else left++;
+  });
+  return { right, left };
+}
+
+function rebalanceAssignedSides() {
+  if (!state.chart) return;
+
+  // Use explicit visibleOrder queue when available
+  if (state.visibleOrder && state.visibleOrder.length > 0) {
+    // assign sides based on queue order (index 0 -> right, 1 -> left, ...)
+    state.visibleOrder.forEach((datasetIndex, queueIdx) => {
+      const ds = state.chart.data.datasets[datasetIndex];
+      if (ds) ds.assignedSide = (queueIdx % 2 === 0) ? 'right' : 'left';
+    });
+    return;
+  }
+
+  // Fallback: derive from current visible datasets
+  const visible = state.chart.data.datasets
+    .map((d, i) => ({ d, i }))
+    .filter(x => !x.d.hidden);
+
+  // If nothing visible, nothing to do
+  if (visible.length === 0) return;
+
+  // Assign sides alternating starting on RIGHT so first visible becomes RIGHT
+  visible.forEach((v, idx) => {
+    v.d.assignedSide = (idx % 2 === 0) ? 'right' : 'left';
+  });
+}
+
+function setAxisDisplayByDatasetIndex(index, visible) {
+  if (!state.chart) return;
+
+  const ds = state.chart.data.datasets[index];
+  if (!ds) return;
+
+  // If making visible, append to visibleOrder queue (don't overwrite existing entries)
+  if (visible) {
+    if (!state.visibleOrder.includes(index)) state.visibleOrder.push(index);
+    ds.hidden = false;
+  } else {
+    // When hiding, remove from visibleOrder and clear assignedSide
+    state.visibleOrder = state.visibleOrder.filter(i => i !== index);
+    ds.hidden = true;
+    delete ds.assignedSide;
+  }
+
+  // After changes, rebalance based on the visibleOrder queue
+  rebalanceAssignedSides();
+
+  // Update axes based on datasets and visibility
+  normalizeAxes();
+  state.chart.update('none');
 }
 
 function updateChart(history, timescale = '1h') {
@@ -125,8 +256,11 @@ function updateChart(history, timescale = '1h') {
   const sorted = [...history].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
   
   const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
-  state.chart.options.scales.y1.title.text = `Temp (${unitLabel})`;
-  state.chart.data.datasets[1].label = `Temp (${unitLabel})`;
+  // Update dataset label and axis title meta (axes rebuilt by normalizeAxes)
+  if (state.chart && state.chart.data && state.chart.data.datasets[1]) {
+    state.chart.data.datasets[1].label = `Temp (${unitLabel})`;
+    state.chart.data.datasets[1].axisTitle = `Temp (${unitLabel})`;
+  }
 
   state.chart.data.labels = sorted.map(h => {
     const d = new Date(h.timestamp);
@@ -149,7 +283,24 @@ function updateChart(history, timescale = '1h') {
     const temp = h.temperature;
     return (state.tempUnit === 'F' && temp !== null) ? (temp * 9/5) + 32 : temp;
   });
+  normalizeAxes();
   state.chart.update('none'); // Update without animation for performance
+}
+
+function toggleHumidity() {
+  const chk = document.getElementById('showHumidity');
+  if (!chk || !state.chart) return;
+  setAxisDisplayByDatasetIndex(0, chk.checked);
+  localStorage.setItem('showHumidity', chk.checked);
+  addLogEntry(`${chk.checked ? 'Showing' : 'Hiding'} humidity on chart`);
+}
+
+function toggleTemperature() {
+  const chk = document.getElementById('showTemperature');
+  if (!chk || !state.chart) return;
+  setAxisDisplayByDatasetIndex(1, chk.checked);
+  localStorage.setItem('showTemperature', chk.checked);
+  addLogEntry(`${chk.checked ? 'Showing' : 'Hiding'} temperature on chart`);
 }
 
 function toggleIpFilter() {

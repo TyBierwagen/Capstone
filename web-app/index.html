@@ -322,6 +322,23 @@
     input:checked + .slider:before {
       transform: translateX(20px);
     }
+
+    /* Smaller switches used near chart controls */
+    .small-switch {
+      width: 34px;
+      height: 20px;
+    }
+
+    .small-switch .slider:before {
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+    }
+
+    .small-switch input:checked + .slider:before {
+      transform: translateX(14px);
+    }
   </style>
 </head>
 <body>
@@ -459,6 +476,22 @@
         </div>
         <div style="height: 300px; position: relative;">
           <canvas id="sensorChart"></canvas>
+        </div>
+        <div style="margin-top: 10px; display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+          <div style="display:flex; align-items:center; gap:10px; background: rgba(255,255,255,0.02); padding:6px 10px; border-radius: 10px; border:1px solid rgba(255,255,255,0.04);">
+            <span style="font-size:13px; color:#94a3b8;">Humidity</span>
+            <label class="switch small-switch" style="margin:0;">
+              <input type="checkbox" id="showHumidity" checked onchange="toggleHumidity()">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; background: rgba(255,255,255,0.02); padding:6px 10px; border-radius: 10px; border:1px solid rgba(255,255,255,0.04);">
+            <span style="font-size:13px; color:#94a3b8;">Temperature</span>
+            <label class="switch small-switch" style="margin:0;">
+              <input type="checkbox" id="showTemperature" checked onchange="toggleTemperature()">
+              <span class="slider"></span>
+            </label>
+          </div>
         </div>
       </div>
 
