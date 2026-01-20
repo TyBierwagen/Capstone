@@ -339,6 +339,39 @@
     .small-switch input:checked + .slider:before {
       transform: translateX(14px);
     }
+
+    /* Arrow control buttons */
+    .arrow-grid { display: grid; grid-template-columns: 40px 40px; gap:8px; }
+    .arrow-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      border: none;
+      background: rgba(255,255,255,0.04);
+      color: #f8fafc;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .arrow-btn:active { transform: translateY(1px); box-shadow: inset 0 0 8px rgba(0,0,0,0.4); }
+    .arrow-help { font-size: 12px; color:#94a3b8; margin-left:8px; }
+
+    .chart-error-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(5, 7, 15, 0.72);
+      color: #fecaca;
+      font-weight: 700;
+      border-radius: 12px;
+      text-align: center;
+      padding: 12px;
+      z-index: 5;
+    }
   </style>
 </head>
 <body>
@@ -353,7 +386,7 @@
 
     <div class="grid">
       <div class="card">
-        <h2><span id="statusIndicator" class="status-indicator disconnected"></span>Connection</h2>
+        <h2><span id="statusIndicator" class="status-indicator disconnected"></span>Sensor Database Connection</h2>
         
         <div class="form-row" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; background: rgba(255,255,255,0.05); padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
           <div style="display: flex; flex-direction: column; gap: 2px;">
@@ -363,7 +396,7 @@
           <div style="display: flex; align-items: center; gap: 8px;">
             <span style="font-size: 11px; color: #94a3b8;">Local</span>
             <label class="switch">
-              <input type="checkbox" id="apiSourceToggle" onchange="toggleApiSource()">
+              <input type="checkbox" id="apiSourceToggle">
               <span class="slider"></span>
             </label>
             <span style="font-size: 11px; color: #94a3b8;">Prod</span>
@@ -376,24 +409,24 @@
             <span style="font-size: 11px; color: #94a3b8;">Default: Latest from any device</span>
           </div>
           <label class="switch">
-            <input type="checkbox" id="filterIpToggle" onchange="toggleIpFilter()">
+            <input type="checkbox" id="filterIpToggle">
             <span class="slider"></span>
           </label>
         </div>
 
         <div id="ipInputContainer" class="form-row" style="display: none;">
           <label for="deviceIp">Device IP Address</label>
-          <input type="text" id="deviceIp" placeholder="e.g., 192.168.1.120" oninput="updateActiveIp()" />
+          <input type="text" id="deviceIp" placeholder="e.g., 192.168.1.120" />
         </div>
 
         <div class="form-row">
           <label for="functionKey">Access Key (Optional)</label>
-          <input type="password" id="functionKey" placeholder="Enter Azure Function key" oninput="updateActiveKey()" />
+          <input type="password" id="functionKey" placeholder="Enter Azure Function key" />
           <div id="functionKeyHint" style="font-size:11px; color:#94a3b8; margin-top:6px; display:none;">Key set: <span id="maskedKey">••••••••</span></div>
         </div>
 
-        <button id="connectBtn" onclick="toggleConnection()">Connect</button>
-        <button class="plain" style="margin-top:12px;" onclick="refreshData()">Refresh Now</button>
+        <button id="connectBtn">Connect</button>
+        <button id="refreshNowBtn" class="plain" style="margin-top:12px;">Refresh Now</button>
       </div>
 
       <div class="card">
@@ -402,7 +435,7 @@
           <div style="display: flex; align-items: center; gap: 8px;">
             <span style="font-size: 13px; color: #94a3b8;">°C</span>
             <label class="switch">
-              <input type="checkbox" id="tempUnitToggle" onchange="toggleTempUnit()">
+              <input type="checkbox" id="tempUnitToggle">
               <span class="slider"></span>
             </label>
             <span style="font-size: 13px; color: #94a3b8;">°F</span>
@@ -465,7 +498,7 @@
           <h2 style="margin: 0;">Environmental Trends</h2>
           <div style="display: flex; gap: 8px; align-items: center;">
             <label for="timeScale" style="font-size: 13px; color: #94a3b8;">Scale:</label>
-            <select id="timeScale" onchange="refreshData()" style="padding: 4px 8px; border-radius: 6px; background: rgba(15, 23, 42, 0.6); color: white; border: 1px solid rgba(255,255,255,0.1); font-size: 13px;">
+            <select id="timeScale" style="padding: 4px 8px; border-radius: 6px; background: rgba(15, 23, 42, 0.6); color: white; border: 1px solid rgba(255,255,255,0.1); font-size: 13px;">
               <option value="1h" selected>Past Hour</option>
               <option value="1d">Past Day</option>
               <option value="1m">Past Month</option>
@@ -475,20 +508,26 @@
           </div>
         </div>
         <div style="height: 300px; position: relative;">
+          <div id="chartError" class="chart-error-overlay" style="display:flex;">
+            <div>
+              <div style="font-size:16px;">Sensor database connection closed</div>
+              <div style="font-size:13px; color:#cbd5f5; margin-top:6px;">Connect to sensor database to display environmental trends</div>
+            </div>
+          </div>
           <canvas id="sensorChart"></canvas>
         </div>
         <div style="margin-top: 10px; display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
           <div style="display:flex; align-items:center; gap:10px; background: rgba(255,255,255,0.02); padding:6px 10px; border-radius: 10px; border:1px solid rgba(255,255,255,0.04);">
             <span style="font-size:13px; color:#94a3b8;">Humidity</span>
             <label class="switch small-switch" style="margin:0;">
-              <input type="checkbox" id="showHumidity" checked onchange="toggleHumidity()">
+              <input type="checkbox" id="showHumidity" checked>
               <span class="slider"></span>
             </label>
           </div>
           <div style="display:flex; align-items:center; gap:10px; background: rgba(255,255,255,0.02); padding:6px 10px; border-radius: 10px; border:1px solid rgba(255,255,255,0.04);">
             <span style="font-size:13px; color:#94a3b8;">Temperature</span>
             <label class="switch small-switch" style="margin:0;">
-              <input type="checkbox" id="showTemperature" checked onchange="toggleTemperature()">
+              <input type="checkbox" id="showTemperature" checked>
               <span class="slider"></span>
             </label>
           </div>
@@ -498,6 +537,54 @@
       
 
     <div class="grid">
+      <div class="card" style="margin-top: 12px; margin-bottom: 24px; grid-column: 1 / -1;">
+        <h2>Override Control</h2>
+        <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+          <div class="form-row" style="min-width:220px;">
+            <label style="margin-bottom:6px;">Enable Override</label>
+            <label class="switch">
+              <input type="checkbox" id="overrideEnable">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="form-row" style="min-width:300px;">
+            <label style="margin-bottom:6px;">Manual Direction</label>
+            <div style="display:flex; align-items:center; gap:12px;">
+              <div id="overrideArrows" class="arrow-grid" style="display:grid; grid-template-columns: 40px 40px; gap:8px;">
+                <button class="arrow-btn" data-dir="up" title="Forward (Arrow Up / W)" aria-label="Up">▲</button>
+                <button class="arrow-btn" data-dir="right" title="Rotate Right (Arrow Right / D)" aria-label="Right">▶</button>
+                <button class="arrow-btn" data-dir="left" title="Rotate Left (Arrow Left / A)" aria-label="Left">◀</button>
+                <button class="arrow-btn" data-dir="down" title="Backward (Arrow Down / S)" aria-label="Down">▼</button>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                <span class="arrow-help">Use Arrow keys or <strong>W/A/S/D</strong> — Left/Right rotate</span>
+                <span id="overrideStatus" style="font-size:13px; color:#cbd5f5;">Last: --</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Robot Estimated Position</h2>
+        <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+          <div style="flex:1; min-width:220px;">
+            <canvas id="robotMap" class="robot-map" style="width:100%; height:240px; border-radius:12px; border:1px solid rgba(255,255,255,0.06); background: rgba(0,0,0,0.03);"></canvas>
+          </div>
+          <div style="min-width:180px;">
+            <div id="robotPosition" style="font-size:13px; color:#cbd5f5; margin-bottom:8px;">Position: (0, 0) — Facing: N (0°)</div>
+            <div style="font-size:12px; color:#94a3b8;">Trail shows past positions. Use <strong>Left/Right</strong> to rotate, <strong>Up/Down</strong> or <strong>W/S</strong> to move.</div>
+            <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+              <button id="resetPositionBtn" class="plain">Reset Position</button>
+              <label style="font-size:12px; color:#94a3b8; display:flex; align-items:center; gap:6px;">
+                Trail limit:
+                <input id="trailLimitInput" type="number" min="1" value="200" style="width:80px; padding:6px; border-radius:6px; background: rgba(15,23,42,0.6); color:#f8fafc; border:1px solid rgba(255,255,255,0.06);" />
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="card">
         <h2>Activity Log</h2>
         <div id="activityLog" class="log">
@@ -506,7 +593,7 @@
             <span>Dashboard booted</span>
           </div>
         </div>
-        <button class="plain" style="margin-top: 12px;" onclick="clearLog()">Clear Log</button>
+        <button id="clearLogBtn" class="plain" style="margin-top: 12px;">Clear Log</button>
       </div>
     </div>
   </div>
@@ -523,6 +610,6 @@
     </div>
   </footer>
 
-  <script src="app.js"></script>
+  <script type="module" src="js/main.js"></script>
 </body>
 </html>
