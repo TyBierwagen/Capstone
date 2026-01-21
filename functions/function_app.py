@@ -6,10 +6,12 @@ import os
 import uuid
 from typing import Optional
 from azure.data.tables import TableServiceClient, UpdateMode
+from zoneinfo import ZoneInfo
 
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import traceback
 
 app = func.FunctionApp()
 
@@ -24,6 +26,29 @@ def get_table_client(table_name: str):
 
 def now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat() + "Z"
+
+
+def format_timedelta(seconds: float) -> str:
+    """Return a human-friendly duration string for the given seconds."""
+    try:
+        s = int(round(seconds))
+    except Exception:
+        return "unknown"
+
+    days, rem = divmod(s, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours or (days and (minutes or secs)):
+        parts.append(f"{hours}h")
+    if minutes or (hours and secs):
+        parts.append(f"{minutes}m")
+    parts.append(f"{secs}s")
+
+    return " ".join(parts)
 
 
 def sanitize_timestamp(value):
@@ -443,7 +468,7 @@ def test_email(req: func.HttpRequest) -> func.HttpResponse:
                 pass
 
         to = (req.params.get("to") or (body.get("to") if body else None) or os.getenv("ALERT_RECIPIENT") or "tybierwagen@gmail.com")
-        sender = (req.params.get("from") or (body.get("from") if body else None) or os.getenv("ACS_SENDER_EMAIL") or "donotreply@tybierwagen.com")
+        sender = (req.params.get("from") or (body.get("from") if body else None) or os.getenv("ACS_SENDER_EMAIL") or "DoNotReply@tybierwagen.com")
 
         # Temporarily override env vars for this process so send_alert_email picks them up
         if to:
@@ -455,6 +480,12 @@ def test_email(req: func.HttpRequest) -> func.HttpResponse:
         device_id_raw = req.params.get("deviceId") or (body.get("deviceId") if body else None)
         device_id = str(device_id_raw) if device_id_raw is not None else "test-device"
 
+        # Optional lastSeen override (ISO string). If provided, it's used instead of now().
+        last_seen_raw = req.params.get("lastSeen") or (body.get("lastSeen") if body else None)
+        last_seen = None
+        if last_seen_raw:
+            last_seen = sanitize_timestamp(last_seen_raw)
+
         # Optional subject override. If subject == "sender", use the sender email as the subject.
         subject_raw = req.params.get("subject") or (body.get("subject") if body else None)
         subject = None
@@ -463,29 +494,70 @@ def test_email(req: func.HttpRequest) -> func.HttpResponse:
             if subject.lower() == "sender":
                 subject = sender
 
-        send_alert_email(device_id, now_iso(), subject)
-        return json_response({"message": "Test email attempted", "recipient": to, "sender": sender, "subject": subject})
+        # Debug flag: when true, return ACS exception details in the send_result for diagnostics
+        debug = parse_bool(req.params.get("debug"), False)
+        if not debug and body:
+            debug = parse_bool(body.get("debug"), False)
+
+        # If last_seen isn't provided, default to now
+        if not last_seen:
+            last_seen = now_iso()
+
+        send_result = send_alert_email(device_id, last_seen, subject, debug=debug)
+        return json_response({"message": "Test email attempted", "recipient": to, "sender": sender, "subject": subject, "send_result": send_result})
     except Exception as e:
         logging.error("Failed to send test email: %s", e)
         return json_response({"error":"Failed to send test email", "details": str(e)}, status=500)
 
 
-def send_alert_email(device_id: str, last_seen: str, subject_override: Optional[str] = None):
+def send_alert_email(device_id: str, last_seen: str, subject_override: Optional[str] = None, debug: bool = False) -> dict:
     """Send an alert email. Prefer Azure Communication Services (ACS) if configured, otherwise fall back to SMTP.
     If `subject_override` is provided it will be used as the email subject. Use the special value "sender" to
-    set the subject to the verified ACS sender email address."""
+    set the subject to the verified ACS sender email address.
+
+    When `debug=True`, ACS exceptions (if any) will be returned in the result under the key `acs_exception`.
+
+    Returns a dict describing how the send was attempted and any identifiers or errors.
+    Example: { "method": "acs", "id": "<msg-id>" } or { "method": "smtp", "sent": True }
+    """
     recipient = os.getenv("ALERT_RECIPIENT", "tybierwagen@tamu.edu")
 
     # Try Azure Communication Services first (connection string stored in Key Vault for production)
     acs_conn = os.getenv("ACS_CONNECTION_STRING")
-    acs_sender = os.getenv("ACS_SENDER_EMAIL")
+    acs_sender = os.getenv("ACS_SENDER_EMAIL", "DoNotReply@tybierwagen.com")
+
+    # Parse last_seen into a timezone-aware datetime (assume input is iso/z)
+    try:
+        last_seen_dt_utc = datetime.datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
+    except Exception:
+        # Fallback: treat as current time minus 0 seconds
+        last_seen_dt_utc = datetime.datetime.now(datetime.timezone.utc)
+
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+
+    # Convert to Central Time (America/Chicago)
+    central_tz = ZoneInfo("America/Chicago")
+    try:
+        last_seen_central = last_seen_dt_utc.astimezone(central_tz)
+    except Exception:
+        last_seen_central = last_seen_dt_utc.replace(tzinfo=datetime.timezone.utc).astimezone(central_tz)
+    now_central = now_utc.astimezone(central_tz)
+
+    # Human readable fields
+    last_seen_str = last_seen_central.replace(microsecond=0).isoformat()
+    now_str = now_central.replace(microsecond=0).isoformat()
+
+    elapsed_seconds = (now_utc - last_seen_dt_utc).total_seconds()
+    elapsed_str = format_timedelta(elapsed_seconds)
 
     body = f"""
     The soil sensor device '{device_id}' has gone offline.
-    
-    Last Seen: {last_seen}
-    Current Time: {now_iso()}
-    
+
+    Last Seen (Central): {last_seen_str}
+    Current Time (Central): {now_str}
+
+    Not seen in: {elapsed_str}
+
     Please check the robot's power and network connection.
     """
 
@@ -499,22 +571,41 @@ def send_alert_email(device_id: str, last_seen: str, subject_override: Optional[
     if subject and subject.lower() == "sender":
         subject = acs_sender or os.getenv("ACS_SENDER_EMAIL") or subject
 
+    acs_exception = None
+
+    # Attempt ACS send and return result including message id when available
     if acs_conn and acs_sender:
         try:
             from azure.communication.email import EmailClient
             client = EmailClient.from_connection_string(acs_conn)
 
+            # Use the payload shape expected by ACS SDK (senderAddress and recipient address)
             message = {
-                "sender": acs_sender,
+                "senderAddress": acs_sender,
                 "content": {"subject": subject, "plainText": body},
-                "recipients": {"to": [{"email": recipient}]}
+                "recipients": {"to": [{"address": recipient}]}
             }
 
-            resp = client.send(message) # type: ignore
-            logging.info("Alert email sent via ACS to %s (id=%s)", recipient, getattr(resp, 'id', 'n/a'))
-            return
+            poller = client.begin_send(message) # type: ignore
+            resp = poller.result()
+            # Response may be a mapping or object; try common keys
+            msg_id = None
+            try:
+                if isinstance(resp, dict):
+                    msg_id = resp.get('id') or resp.get('messageId') or resp.get('message_id')
+                else:
+                    msg_id = getattr(resp, 'id', None)
+            except Exception:
+                msg_id = None
+
+            logging.info("Alert email queued via ACS to %s (id=%s)", recipient, msg_id)
+            result = {"method": "acs", "id": msg_id}
+            if debug:
+                result["body_preview"] = body
+            return result
         except Exception as e:
             logging.exception("Failed to send alert via ACS, will attempt SMTP fallback: %s", e)
+            acs_exception = {"error": str(e), "trace": traceback.format_exc()}
 
     # Fallback to SMTP if ACS not configured or failed
     smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
@@ -524,11 +615,11 @@ def send_alert_email(device_id: str, last_seen: str, subject_override: Optional[
 
     if not smtp_user or not smtp_password:
         logging.warning("SMTP credentials not configured. Skipping email alert.")
-        return
-
-    msg = MIMEMultipart()
-    msg['From'] = smtp_user
-    msg['To'] = recipient
+        result = {"method": "none", "reason": "smtp_credentials_missing"}
+        if debug and acs_exception:
+            result["acs_exception"] = acs_exception
+        if debug:
+            result["body_preview"] = body
     msg['Subject'] = subject
     msg.attach(MIMEText(body, 'plain'))
 
@@ -539,12 +630,19 @@ def send_alert_email(device_id: str, last_seen: str, subject_override: Optional[
         server.send_message(msg)
         server.quit()
         logging.info("Alert email sent to %s", recipient)
+        result = {"method": "smtp", "sent": True}
+        if debug and acs_exception:
+            result["acs_exception"] = acs_exception
+        if debug:
+            result["body_preview"] = body
+        return result
     except Exception as e:
         logging.error("Failed to send alert email via SMTP: %s", e)
-
-
-# Duplicate test_email function removed; single 'test_email' definition is retained above to prevent name collision.
-
+        result = {"method": "smtp", "sent": False, "error": str(e)}
+        if debug and acs_exception:
+            result["acs_exception"] = acs_exception
+        if debug:
+            result["body_preview"] = body
 
 @app.function_name("checkDeviceHealth")
 @app.timer_trigger(schedule="0 */10 * * * *", arg_name="myTimer", run_on_startup=False, use_monitor=False) 
