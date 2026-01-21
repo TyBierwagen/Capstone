@@ -30,11 +30,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Wire UI elements
   const connectBtn = document.getElementById('connectBtn'); if (connectBtn) connectBtn.addEventListener('click', toggleConnection);
-  const refreshBtn = document.getElementById('refreshNowBtn'); if (refreshBtn) refreshBtn.addEventListener('click', refreshData);
+  const refreshBtn = document.getElementById('refreshNowBtn'); if (refreshBtn) refreshBtn.addEventListener('click', () => refreshData(true));
   const clearLogBtn = document.getElementById('clearLogBtn'); if (clearLogBtn) clearLogBtn.addEventListener('click', clearLog);
 
   // time scale changes refresh chart data
-  document.getElementById('timeScale')?.addEventListener('change', () => refreshData());
+  document.getElementById('timeScale')?.addEventListener('change', () => refreshData(true));
 
   // toggles and inputs
   document.getElementById('apiSourceToggle')?.addEventListener('change', toggleApiSource);

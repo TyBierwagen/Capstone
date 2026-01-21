@@ -70,7 +70,7 @@ Location: `web-app/`
 Location: `functions/`
 
 **Files:**
-- `src/functions/api.js` (197 lines) - API implementation
+- `functions/function_app.py` - Primary Python Azure Function implementation (production). Local SQLite variant under `functions/src/functions/` has been removed.
 - `package.json` - Node.js dependencies
 - `host.json` - Functions runtime configuration
 - `README.md` - API documentation

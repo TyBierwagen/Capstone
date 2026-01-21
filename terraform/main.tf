@@ -106,9 +106,9 @@ resource "azurerm_api_management_api_policy" "main" {
     <inbound>
         <cors>
             <allowed-origins>
-                <origin>*</origin>
                 <origin>http://localhost:5500</origin>
                 <origin>http://127.0.0.1:5500</origin>
+                <origin>https://soil.tybierwagen.com</origin>
             </allowed-origins>
             <allowed-methods>
                 <method>GET</method>
@@ -125,7 +125,7 @@ resource "azurerm_api_management_api_policy" "main" {
             </expose-headers>
         </cors>
         <base />
-        <set-backend-service backend-id="${azurerm_api_management_backend.functions.name}" />
+        <set-backend-service base-url="https://${azurerm_linux_function_app.main.default_hostname}/api" />
     </inbound>
     <backend>
         <base />
@@ -267,6 +267,28 @@ resource "azurerm_key_vault_access_policy" "function_app" {
   ]
 }
 
+# Azure Communication Services - Email
+# NOTE: Some versions of the AzureRM provider may not support creating
+# `azurerm_communication_service` directly. To avoid provider compatibility
+# issues during Terraform runs, the Communication Service is not created
+# automatically by Terraform in this configuration.
+#
+# Please create an Azure Communication Service (Email) in the portal or via
+# `az communication` CLI, then store its connection string manually in
+# the Key Vault secret below (name: "ACS-ConnectionString").
+
+# Placeholder Key Vault secret for ACS connection string. After you create
+# the Communication Service, set this secret using the Azure CLI:
+# az keyvault secret set --vault-name <vault> --name "ACS-ConnectionString" --value "<connection-string>"
+resource "azurerm_key_vault_secret" "acs_connection" {
+  name         = "ACS-ConnectionString"
+  value        = var.acs_connection_string
+  key_vault_id = azurerm_key_vault.main.id
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
+}
 
 resource "azurerm_linux_function_app" "main" {
   name                       = "${var.project_name}-func-${var.environment}"
@@ -302,6 +324,11 @@ resource "azurerm_linux_function_app" "main" {
     APPLICATIONINSIGHTS_CONNECTION_STRING = azurerm_application_insights.main.connection_string
     ENABLE_ORYX_BUILD              = "true"
     SCM_DO_BUILD_DURING_DEPLOYMENT = "true"
+    # Azure Communication Services connection string is stored in Key Vault for security
+    # It is populated from the Key Vault secret if provided.
+    ACS_CONNECTION_STRING = azurerm_key_vault_secret.acs_connection.value
+    # Verified sender email for ACS (set this to a verified address after deploy if using email)
+    ACS_SENDER_EMAIL = var.acs_sender_email
   }
   
   lifecycle {

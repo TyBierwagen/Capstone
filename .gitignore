@@ -10,6 +10,9 @@ microcontroller/mcu.ino
 microcontroller/mcu_test.ino
 microcontroller/soil_sensor.ino
 
+# Local settings for Azure Functions
+functions/local.settings.json
+
 # Local environment files
 .env
 .env.local

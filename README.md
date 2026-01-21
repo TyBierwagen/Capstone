@@ -55,7 +55,8 @@ This project implements a modern cloud-native architecture on Azure:
 │   ├── index.html         # Main HTML file
 │   └── app.js             # JavaScript application logic
 ├── functions/             # Azure Functions (serverless backend)
-│   ├── src/functions/     # Function implementations
+│   ├── function_app.py    # Production Python Function App (Azure Tables)
+│   ├── src/functions/     # (deprecated) Local SQLite implementation removed — see `functions/src/functions/README_LOCAL_REMOVED.md`
 │   ├── package.json       # Node.js dependencies
 │   └── README.md          # Functions documentation
 └── README.md              # This file

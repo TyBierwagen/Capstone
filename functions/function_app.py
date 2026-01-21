@@ -7,6 +7,10 @@ import uuid
 from typing import Optional
 from azure.data.tables import TableServiceClient, UpdateMode
 
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
 app = func.FunctionApp()
 
 # Storage Configuration
@@ -19,7 +23,7 @@ def get_table_client(table_name: str):
     return table_service.get_table_client(table_name)
 
 def now_iso() -> str:
-    return datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat() + "Z"
 
 
 def json_response(payload: dict, status: int = 200) -> func.HttpResponse:
@@ -72,13 +76,13 @@ def persist_device(device_id: str, ip_address: str, port: int, device_type: str)
 
 def store_sensor_entry(payload: dict) -> dict:
     # Use server time consistently for SensorData to ensure reliable charting
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     timestamp = now.replace(microsecond=0).isoformat() + "Z"
     device_ip = payload.get("deviceIp", "unknown")
     
     entry = {
         "PartitionKey": device_ip.replace(".", "_"),
-        "RowKey": f"{now.timestamp()}_{uuid.uuid4().hex[:8]}",
+        "RowKey": f"{int(now.timestamp()):010d}_{uuid.uuid4().hex[:8]}",
         "deviceIp": device_ip,
         "deviceId": payload.get("deviceId"),
         "commandStatus": payload.get("commandStatus"),
@@ -123,16 +127,36 @@ def fetch_latest_sensor_entry(device_ip: Optional[str] = None, device_id: Option
     if device_ip:
         query = f"PartitionKey eq '{device_ip.replace('.', '_')}'"
     
-    # Tables don't support easy "latest" across all partitions, so we query and sort
+    # Tables don't support easy "latest" across all partitions.
+    # We restrict the search to recent data (last hour) to avoid massive table scans.
+    now = datetime.datetime.now(datetime.timezone.utc)
+    since = now - datetime.timedelta(hours=1)
+    time_filter = f"RowKey ge '{int(since.timestamp()):010d}_0'"
+    
+    query = f"({query}) and {time_filter}" if query else time_filter
+
     try:
+        # Get entities and sort them to find the true latest
         entities = list(client.query_entities(query_filter=query))
     except Exception as e:
         logging.error(f"Table query error: {e}")
         return None
         
     if not entities:
+        # Fall back to a wider search if no data in the last hour
+        since_24h = now - datetime.timedelta(hours=24)
+        query_24h = f"RowKey ge '{int(since_24h.timestamp()):010d}_0'"
+        if device_ip:
+            query_24h = f"PartitionKey eq '{device_ip.replace('.', '_')}' and {query_24h}"
+        try:
+            entities = list(client.query_entities(query_filter=query_24h))
+        except:
+            return None
+
+    if not entities:
         return None
 
+    # Sort by timestamp string descending
     latest = sorted(entities, key=lambda x: str(x.get("timestamp", "")), reverse=True)[0]
     
     # Get device info
@@ -158,7 +182,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
         filters.append(f"PartitionKey eq '{device_ip.replace('.', '_')}'")
     
     # Time window filtering if timescale is specific
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     since = None
     if timescale == "1h": since = now - datetime.timedelta(hours=1)
     elif timescale == "1d": since = now - datetime.timedelta(days=1)
@@ -166,7 +190,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
     elif timescale == "1y": since = now - datetime.timedelta(days=365)
 
     if since:
-        filters.append(f"RowKey ge '{since.timestamp()}_0'")
+        filters.append(f"RowKey ge '{int(since.timestamp()):010d}_0'")
 
     query = " and ".join(filters) if filters else ""
         
@@ -348,3 +372,161 @@ def get_control_command(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="health", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def health_check(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse("OK", status_code=200)
+
+
+@app.function_name("testEmail")
+@app.route(route="test-email", methods=["GET","POST"], auth_level=func.AuthLevel.ANONYMOUS)
+def test_email(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Trigger a test alert email. Query/body params:
+    - to: recipient email (overrides ALERT_RECIPIENT env)
+    - from: sender email (overrides ACS_SENDER_EMAIL env)
+    - deviceId: optional device id shown in subject (default 'test-device')
+    """
+    logging.info("Test email request received")
+    try:
+        body = {}
+        if req.method == "POST":
+            try:
+                body = req.get_json()
+            except:
+                pass
+
+        to = (req.params.get("to") or (body.get("to") if body else None) or os.getenv("ALERT_RECIPIENT") or "tybierwagen@gmail.com")
+        sender = (req.params.get("from") or (body.get("from") if body else None) or os.getenv("ACS_SENDER_EMAIL") or "donotreply@tybierwagen.com")
+
+        # Temporarily override env vars for this process so send_alert_email picks them up
+        if to:
+            os.environ["ALERT_RECIPIENT"] = to
+        if sender:
+            os.environ["ACS_SENDER_EMAIL"] = sender
+
+        # Ensure device_id is a concrete str (avoid passing None/Any to send_alert_email)
+        device_id_raw = req.params.get("deviceId") or (body.get("deviceId") if body else None)
+        device_id = str(device_id_raw) if device_id_raw is not None else "test-device"
+
+        send_alert_email(device_id, now_iso())
+        return json_response({"message": "Test email attempted", "recipient": to, "sender": sender})
+    except Exception as e:
+        logging.error("Failed to send test email: %s", e)
+        return json_response({"error":"Failed to send test email", "details": str(e)}, status=500)
+
+
+def send_alert_email(device_id: str, last_seen: str):
+    """Send an alert email. Prefer Azure Communication Services (ACS) if configured, otherwise fall back to SMTP."""
+    recipient = os.getenv("ALERT_RECIPIENT", "tybierwagen@tamu.edu")
+
+    # Try Azure Communication Services first (connection string stored in Key Vault for production)
+    acs_conn = os.getenv("ACS_CONNECTION_STRING")
+    acs_sender = os.getenv("ACS_SENDER_EMAIL")
+
+    body = f"""
+    The soil sensor device '{device_id}' has gone offline.
+    
+    Last Seen: {last_seen}
+    Current Time: {now_iso()}
+    
+    Please check the robot's power and network connection.
+    """
+
+    if acs_conn and acs_sender:
+        try:
+            from azure.communication.email import EmailClient
+            client = EmailClient.from_connection_string(acs_conn)
+
+            message = {
+                "sender": acs_sender,
+                "content": {"subject": f"ALERT: Soil Sensor Offline - {device_id}", "plainText": body},
+                "recipients": {"to": [{"email": recipient}]}
+            }
+
+            resp = client.send(message) # type: ignore
+            logging.info("Alert email sent via ACS to %s (id=%s)", recipient, getattr(resp, 'id', 'n/a'))
+            return
+        except Exception as e:
+            logging.exception("Failed to send alert via ACS, will attempt SMTP fallback: %s", e)
+
+    # Fallback to SMTP if ACS not configured or failed
+    smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+
+    if not smtp_user or not smtp_password:
+        logging.warning("SMTP credentials not configured. Skipping email alert.")
+        return
+
+    msg = MIMEMultipart()
+    msg['From'] = smtp_user
+    msg['To'] = recipient
+    msg['Subject'] = f"ALERT: Soil Sensor Offline - {device_id}"
+    msg.attach(MIMEText(body, 'plain'))
+
+    try:
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(smtp_user, smtp_password)
+        server.send_message(msg)
+        server.quit()
+        logging.info("Alert email sent to %s", recipient)
+    except Exception as e:
+        logging.error("Failed to send alert email via SMTP: %s", e)
+
+
+# Duplicate test_email function removed; single 'test_email' definition is retained above to prevent name collision.
+
+
+@app.function_name("checkDeviceHealth")
+@app.timer_trigger(schedule="0 */10 * * * *", arg_name="myTimer", run_on_startup=False, use_monitor=False) 
+def check_device_health(myTimer: func.TimerRequest) -> None:
+    logging.info("Running scheduled health check")
+    client = get_table_client("Devices")
+    if not client:
+        return
+
+    try:
+        # Check all active devices
+        devices = list(client.query_entities(query_filter="status eq 'active'"))
+        now = datetime.datetime.now(datetime.timezone.utc)
+        
+        for device in devices:
+            last_seen_str = device.get("lastSeen")
+            if not last_seen_str:
+                continue
+            
+            try:
+                last_seen = datetime.datetime.fromisoformat(last_seen_str.replace("Z", "+00:00"))
+                diff = (now - last_seen).total_seconds()
+                
+                # If offline for more than 10 minutes (600 seconds)
+                if diff > 600:
+                    # Check if we've already sent an alert in the last 24 hours to avoid spamming
+                    last_alert = device.get("lastAlertSentAt")
+                    should_alert = True
+                    if last_alert:
+                        last_alert_dt = datetime.datetime.fromisoformat(last_alert.replace("Z", "+00:00"))
+                        if (now - last_alert_dt).total_seconds() < 86400: # 24 hours
+                            should_alert = False
+                    
+                    if should_alert:
+                        device_id = str(device.get("RowKey") or "unknown")
+                        logging.warning("Device %s is offline (Last seen: %s). Sending alert.", device_id, last_seen_str)
+                        send_alert_email(device_id, last_seen_str)
+                        
+                        # Update device with alert timestamp
+                        device["lastAlertSentAt"] = now_iso()
+                        client.update_entity(mode=UpdateMode.REPLACE, entity=device)
+                    else:
+                        logging.info("Device %s is offline but alert was already sent recently.", device.get("RowKey"))
+                else:
+                    # Device is back online, reset alert timestamp if needed
+                    if device.get("lastAlertSentAt"):
+                        logging.info("Device %s is back online. Resetting alert status.", device.get("RowKey"))
+                        device["lastAlertSentAt"] = None
+                        client.update_entity(mode=UpdateMode.REPLACE, entity=device)
+                        
+            except Exception as ex:
+                logging.error("Error checking health for device %s: %s", device.get("RowKey"), ex)
+                
+    except Exception as e:
+        logging.error("Health check query failed: %s", e)

@@ -10,6 +10,12 @@ sql_admin_password = "ChangeMe123!@#"  # IMPORTANT: Use a strong password in pro
 publisher_name  = "Soil Robot Team"
 publisher_email = "admin@example.com"
 
+# The email address ACS will use as the verified sender for outgoing emails
+# After Terraform applies, verify this sender identity in the ACS Email settings.
+acs_sender_email = "alerts@soilrobot.example.com"
+acs_verification_token = "\"ms-domain-verification=f4b70a3f-f035-4aa0-a258-0fbe7e5f3785""
+
+acs_connection_string = ""
 tags = {
   Project     = "Soil Sensing Robot"
   ManagedBy   = "Terraform"

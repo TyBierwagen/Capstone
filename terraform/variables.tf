@@ -71,3 +71,45 @@ variable "allowed_origins" {
   type        = list(string)
   default     = ["https://portal.azure.com", "http://localhost:5500", "http://127.0.0.1:5500", "https://soil.tybierwagen.com"]
 }
+
+variable "acs_sender_email" {
+  description = "Email address used as the verified sender for Azure Communication Services email (must be verified after deployment)"
+  type        = string
+  default     = "alerts@soilrobot.example.com"
+  validation {
+    # Use double-escaped backslashes so Terraform string parsing keeps the \s and \.
+    condition     = can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.acs_sender_email))
+    error_message = "acs_sender_email must be a valid email address"
+  }
+}
+
+variable "aws_region" {
+  description = "AWS region used for Route53 lookups (Routing is global for Route53, default used for API calls)"
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "route53_zone_name" {
+  description = "The hosted zone name in Route53 for your domain (example: tybierwagen.com)"
+  type        = string
+  default     = "tybierwagen.com"
+}
+
+variable "acs_verification_token" {
+  description = "TXT value for ACS domain verification (include quotes). Example: \"ms-domain-verification=...\""
+  type        = string
+  default     = "\"ms-domain-verification=f4b70a3f-f035-4aa0-a258-0fbe7e5f3785\""
+}
+
+variable "acs_spf_value" {
+  description = "SPF TXT value for ACS (include quotes)"
+  type        = string
+  default     = "\"v=spf1 include:spf.protection.outlook.com -all\""
+}
+
+variable "acs_connection_string" {
+  description = "Azure Communication Services connection string (sensitive). If provided, Terraform will place it in Key Vault secret and wire it to Function App settings."
+  type        = string
+  sensitive   = true
+  default     = ""
+}  

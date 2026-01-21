@@ -372,6 +372,67 @@
       padding: 12px;
       z-index: 5;
     }
+
+    /* Loading States */
+    .loading {
+      position: relative;
+      pointer-events: none;
+    }
+
+    .loading::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.4);
+      backdrop-filter: blur(1px);
+      border-radius: inherit;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .spinner-container {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+      background: rgba(5, 7, 15, 0.4);
+      border-radius: 12px;
+    }
+
+    .loading .spinner-container {
+      display: flex;
+    }
+
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid rgba(255, 255, 255, 0.1);
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .skeleton-text {
+      color: transparent !important;
+      background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.05) 75%);
+      background-size: 200% 100%;
+      animation: skeleton-loading 1.5s infinite;
+      border-radius: 4px;
+      user-select: none;
+    }
+
+    @keyframes skeleton-loading {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
   </style>
 </head>
 <body>
@@ -429,9 +490,9 @@
         <button id="refreshNowBtn" class="plain" style="margin-top:12px;">Refresh Now</button>
       </div>
 
-      <div class="card">
+      <div class="card" id="liveSensorsCard">
+        <div class="spinner-container"><div class="spinner"></div></div>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-          <h2 style="margin: 0;">Live Sensor Readings</h2>
           <div style="display: flex; align-items: center; gap: 8px;">
             <span style="font-size: 13px; color: #94a3b8;">°C</span>
             <label class="switch">
@@ -493,9 +554,9 @@
       </div>
     </div>
 
-      <div class="card" style="margin-top: 12px; margin-bottom: 24px; grid-column: 1 / -1;">
+      <div class="card" id="trendsCard" style="margin-top: 12px; margin-bottom: 24px; grid-column: 1 / -1;">
+        <div class="spinner-container"><div class="spinner"></div></div>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-          <h2 style="margin: 0;">Environmental Trends</h2>
           <div style="display: flex; gap: 8px; align-items: center;">
             <label for="timeScale" style="font-size: 13px; color: #94a3b8;">Scale:</label>
             <select id="timeScale" style="padding: 4px 8px; border-radius: 6px; background: rgba(15, 23, 42, 0.6); color: white; border: 1px solid rgba(255,255,255,0.1); font-size: 13px;">

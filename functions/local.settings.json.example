@@ -1,0 +1,15 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "ALERT_RECIPIENT": "tybierwagen@tamu.edu",
+    "ACS_SENDER_EMAIL": "DoNotReply@soilrobot.example.com",
+    "ACS_CONNECTION_STRING": "endpoint"
+  }, 
+
+  "Host": {
+    "LocalHttpPort": 5500,
+    "CORS": "*"
+  }
+}
