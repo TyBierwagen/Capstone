@@ -3,21 +3,26 @@
 
 project_name     = "soilrobot"
 environment      = "dev"
-location         = "eastus"
-sql_admin_username = "sqladmin"
-sql_admin_password = "ChangeMe123!@#"  # IMPORTANT: Use a strong password in production
+location         = "westus"
+sql_admin_username = "capstoneadmin"
+sql_admin_password = "CapstoneLogin.1$"  # IMPORTANT: Use a strong password in production
 
 publisher_name  = "Soil Robot Team"
-publisher_email = "admin@example.com"
+publisher_email = "tybierwagen@tamu.edu"
 
-# The email address ACS will use as the verified sender for outgoing emails
-# After Terraform applies, verify this sender identity in the ACS Email settings.
-acs_sender_email = "alerts@soilrobot.example.com"
-acs_verification_token = "\"ms-domain-verification=f4b70a3f-f035-4aa0-a258-0fbe7e5f3785""
-
-acs_connection_string = ""
 tags = {
   Project     = "Soil Sensing Robot"
   ManagedBy   = "Terraform"
   Environment = "Development"
 }
+
+# Azure Communication Services email settings
+# Sender address (verified after domain is configured in ACS)
+acs_sender_email    = "DoNotReply@tybierwagen.com"
+# After adding domain in Azure, paste the verification token here.
+# Example: acs_verification_token = "\"ms-domain-verification=YOUR_TOKEN\""
+acs_verification_token = ""
+# SPF TXT value. Use Azure recommended value if different.
+acs_spf_value = "v=spf1 include:amazonses.com include:spf.protection.outlook.com -all"
+
+acs_connection_string = ""

@@ -66,8 +66,18 @@ export function updateChart(history, timescale = '1h') {
   const sorted = [...history].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
   const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
   if (state.chart && state.chart.data && state.chart.data.datasets[1]) { state.chart.data.datasets[1].label = `Temp (${unitLabel})`; state.chart.data.datasets[1].axisTitle = `Temp (${unitLabel})`; }
+  // Sanitize timestamps to handle variants like '+00:00Z' or '+00:00' that some browsers parse inconsistently
+  const sanitizeTs = (ts) => {
+    if (!ts) return null;
+    let v = String(ts).trim();
+    v = v.replace(/\+00:00Z$/, 'Z').replace(/\+00:00$/, 'Z');
+    return v;
+  };
+
   state.chart.data.labels = sorted.map(h => {
-    const d = new Date(h.timestamp); if (isNaN(d.getTime())) return '';
+    const raw = sanitizeTs(h.timestamp);
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return '';
     const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     if (timescale === '1h') return timeStr;
     if (timescale === '1d') return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + timeStr;

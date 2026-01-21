@@ -52,3 +52,14 @@ output "key_vault_uri" {
 output "static_web_app_url" {
   value = azurerm_static_web_app.main.default_host_name
 }
+
+# Convenience outputs for testing the email endpoint via API Management
+output "api_test_email_get_url" {
+  description = "GET endpoint to trigger test email via APIM (query params: to, from, deviceId, subject)"
+  value       = "${azurerm_api_management.main.gateway_url}/api/test-email"
+}
+
+output "api_test_email_post_url" {
+  description = "POST endpoint to trigger test email via APIM (JSON body: {to, from, deviceId, subject})"
+  value       = "${azurerm_api_management.main.gateway_url}/api/test-email"
+}

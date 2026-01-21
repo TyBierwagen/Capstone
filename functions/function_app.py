@@ -26,6 +26,26 @@ def now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat() + "Z"
 
 
+def sanitize_timestamp(value):
+    """Normalize timestamp inputs to an ISO string with a trailing 'Z'.
+    Handles datetime objects and strings like '2026-01-21T17:55:38+00:00Z' or '...+00:00'."""
+    if not value:
+        return None
+    if isinstance(value, datetime.datetime):
+        return value.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    if isinstance(value, str):
+        v = value.strip()
+        # Normalize common problematic suffixes
+        v = v.replace("+00:00Z", "Z").replace("+00:00", "Z")
+        return v
+    try:
+        # Fallback: try parsing to datetime then format to ISO Z
+        parsed = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    except Exception:
+        return str(value)
+
+
 def json_response(payload: dict, status: int = 200) -> func.HttpResponse:
     return func.HttpResponse(json.dumps(payload), status_code=status, mimetype="application/json")
 
@@ -158,7 +178,19 @@ def fetch_latest_sensor_entry(device_ip: Optional[str] = None, device_id: Option
 
     # Sort by timestamp string descending
     latest = sorted(entities, key=lambda x: str(x.get("timestamp", "")), reverse=True)[0]
-    
+
+    # Ensure timestamp exists and is an ISO string (fallback to Table's native Timestamp)
+    if not latest.get("timestamp"):
+        ts_obj = latest.get("Timestamp")
+        if isinstance(ts_obj, datetime.datetime):
+            latest["timestamp"] = ts_obj.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        elif ts_obj is not None:
+            latest["timestamp"] = str(ts_obj)
+
+    # Normalize timestamp string so client JS can parse it reliably
+    if latest.get("timestamp"):
+        latest["timestamp"] = sanitize_timestamp(latest.get("timestamp"))
+
     # Get device info
     device_client = get_table_client("Devices")
     target_ip = latest.get("deviceIp")
@@ -166,9 +198,15 @@ def fetch_latest_sensor_entry(device_ip: Optional[str] = None, device_id: Option
     if device_client and target_ip:
         try:
             device = device_client.get_entity(partition_key="Device", row_key=target_ip.replace(".", "_"))
+            # Normalize device lastSeen if present
+            try:
+                if device.get("lastSeen"):
+                    device["lastSeen"] = sanitize_timestamp(device.get("lastSeen"))
+            except Exception:
+                pass
         except:
             pass
-    
+
     return {**dict(latest), "device": dict(device) if device else None}
 
 
@@ -202,7 +240,19 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
         
     # Sort chronological
     raw_history = sorted([dict(e) for e in entities], key=lambda x: str(x.get("timestamp", "")))
-    
+
+    # Ensure every entry has a timestamp string (fallback to Table's Timestamp value when present)
+    for r in raw_history:
+        if not r.get("timestamp"):
+            ts_obj = r.get("Timestamp")
+            if isinstance(ts_obj, datetime.datetime):
+                r["timestamp"] = ts_obj.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            elif ts_obj is not None:
+                r["timestamp"] = str(ts_obj)
+        # Normalize timestamp formats to be parseable by the browser
+        if r.get("timestamp"):
+            r["timestamp"] = sanitize_timestamp(r.get("timestamp"))
+
     # If we have too many points, aggregate them to ~60 points for the chart
     target_points = 60
     if len(raw_history) <= target_points or timescale == "1h":
@@ -405,15 +455,25 @@ def test_email(req: func.HttpRequest) -> func.HttpResponse:
         device_id_raw = req.params.get("deviceId") or (body.get("deviceId") if body else None)
         device_id = str(device_id_raw) if device_id_raw is not None else "test-device"
 
-        send_alert_email(device_id, now_iso())
-        return json_response({"message": "Test email attempted", "recipient": to, "sender": sender})
+        # Optional subject override. If subject == "sender", use the sender email as the subject.
+        subject_raw = req.params.get("subject") or (body.get("subject") if body else None)
+        subject = None
+        if subject_raw:
+            subject = str(subject_raw)
+            if subject.lower() == "sender":
+                subject = sender
+
+        send_alert_email(device_id, now_iso(), subject)
+        return json_response({"message": "Test email attempted", "recipient": to, "sender": sender, "subject": subject})
     except Exception as e:
         logging.error("Failed to send test email: %s", e)
         return json_response({"error":"Failed to send test email", "details": str(e)}, status=500)
 
 
-def send_alert_email(device_id: str, last_seen: str):
-    """Send an alert email. Prefer Azure Communication Services (ACS) if configured, otherwise fall back to SMTP."""
+def send_alert_email(device_id: str, last_seen: str, subject_override: Optional[str] = None):
+    """Send an alert email. Prefer Azure Communication Services (ACS) if configured, otherwise fall back to SMTP.
+    If `subject_override` is provided it will be used as the email subject. Use the special value "sender" to
+    set the subject to the verified ACS sender email address."""
     recipient = os.getenv("ALERT_RECIPIENT", "tybierwagen@tamu.edu")
 
     # Try Azure Communication Services first (connection string stored in Key Vault for production)
@@ -429,6 +489,16 @@ def send_alert_email(device_id: str, last_seen: str):
     Please check the robot's power and network connection.
     """
 
+    # Determine subject
+    if subject_override:
+        subject = str(subject_override)
+    else:
+        subject = f"ALERT: Soil Sensor Offline - {device_id}"
+
+    # If subject was explicitly set to the sentinel "sender", use the configured ACS sender email
+    if subject and subject.lower() == "sender":
+        subject = acs_sender or os.getenv("ACS_SENDER_EMAIL") or subject
+
     if acs_conn and acs_sender:
         try:
             from azure.communication.email import EmailClient
@@ -436,7 +506,7 @@ def send_alert_email(device_id: str, last_seen: str):
 
             message = {
                 "sender": acs_sender,
-                "content": {"subject": f"ALERT: Soil Sensor Offline - {device_id}", "plainText": body},
+                "content": {"subject": subject, "plainText": body},
                 "recipients": {"to": [{"email": recipient}]}
             }
 
@@ -459,7 +529,7 @@ def send_alert_email(device_id: str, last_seen: str):
     msg = MIMEMultipart()
     msg['From'] = smtp_user
     msg['To'] = recipient
-    msg['Subject'] = f"ALERT: Soil Sensor Offline - {device_id}"
+    msg['Subject'] = subject
     msg.attach(MIMEText(body, 'plain'))
 
     try:

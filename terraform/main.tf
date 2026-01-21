@@ -193,6 +193,28 @@ resource "azurerm_api_management_api_operation" "health" {
   url_template        = "/health"
 }
 
+resource "azurerm_api_management_api_operation" "get_test_email" {
+  operation_id        = "get-test-email"
+  api_name            = azurerm_api_management_api.main.name
+  api_management_name = azurerm_api_management.main.name
+  resource_group_name = azurerm_api_management_api.main.resource_group_name
+  display_name        = "Trigger Test Email (GET)"
+  method              = "GET"
+  url_template        = "/test-email"
+  description         = "Send a test email via ACS or SMTP. Query params: to, from, deviceId, subject"
+}
+
+resource "azurerm_api_management_api_operation" "post_test_email" {
+  operation_id        = "post-test-email"
+  api_name            = azurerm_api_management_api.main.name
+  api_management_name = azurerm_api_management.main.name
+  resource_group_name = azurerm_api_management_api.main.resource_group_name
+  display_name        = "Trigger Test Email (POST)"
+  method              = "POST"
+  url_template        = "/test-email"
+  description         = "Send a test email via ACS or SMTP. Body JSON: { to, from, deviceId, subject }"
+}
+
 # API Management Backend for Azure Functions
 resource "azurerm_api_management_backend" "functions" {
   name                = "functions-backend"
