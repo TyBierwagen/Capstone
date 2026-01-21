@@ -486,20 +486,30 @@ function formatValue(value, precision) {
 }
 
 function formatTimestamp(value) {
-  if (!value) {
-    return '--';
+  if (!value) return '--';
+
+  // Tolerant parsing for several common forms (fixes things like "+00:00Z")
+  let parsed;
+  if (typeof value === 'number') {
+    parsed = new Date(value);
+  } else if (typeof value === 'string') {
+    let cleaned = value.trim();
+    cleaned = cleaned.replace(/\+00:00Z$/, 'Z').replace(/\+00:00$/, 'Z');
+    if (/^\d{10}$/.test(cleaned)) cleaned = Number(cleaned) * 1000;
+    parsed = new Date(cleaned);
+  } else {
+    parsed = new Date(value);
   }
-  
-  // Handle ISO strings or other string dates
-  const parsed = new Date(value);
+
   if (Number.isNaN(parsed.getTime())) return value;
 
-  // Always show month and date for context, plus 2-digit time
+  // Show month/day and a 2-digit time (seconds optional)
   return parsed.toLocaleString([], { 
     month: 'short', 
     day: 'numeric',
     hour: '2-digit', 
-    minute: '2-digit' 
+    minute: '2-digit',
+    second: '2-digit'
   });
 }
 

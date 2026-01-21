@@ -92,10 +92,27 @@ function formatValue(value, precision) {
 
 function formatTimestamp(value) {
   if (!value) return '--';
-  const parsed = new Date(value);
+
+  // Normalize common odd timestamp forms so Date parsing succeeds:
+  // - Some backends send `2026-01-21T17:17:33+00:00Z` (both offset and Z)
+  // - Others may send unix seconds as a string
+  let parsed;
+  if (typeof value === 'number') {
+    parsed = new Date(value);
+  } else if (typeof value === 'string') {
+    let cleaned = value.trim();
+    // Replace a duplicated timezone ("+00:00Z") with single Z
+    cleaned = cleaned.replace(/\+00:00Z$/, 'Z').replace(/\+00:00$/, 'Z');
+    // If it's a 10-digit unix timestamp in seconds, convert to ms
+    if (/^\d{10}$/.test(cleaned)) cleaned = Number(cleaned) * 1000;
+    parsed = new Date(cleaned);
+  } else {
+    parsed = new Date(value);
+  }
+
   if (Number.isNaN(parsed.getTime())) return value;
-  
-  // Added seconds so users can see the 30s updates happening
+
+  // Show month/day and a 2-digit time with seconds so 30s updates are visible
   return parsed.toLocaleString([], { 
     month: 'short', 
     day: 'numeric',
