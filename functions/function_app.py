@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import uuid
-from typing import Optional
+from typing import Optional, Any, Dict
 from azure.data.tables import TableServiceClient, UpdateMode
 from zoneinfo import ZoneInfo
 
@@ -599,7 +599,7 @@ def send_alert_email(device_id: str, last_seen: str, subject_override: Optional[
                 msg_id = None
 
             logging.info("Alert email queued via ACS to %s (id=%s)", recipient, msg_id)
-            result = {"method": "acs", "id": msg_id}
+            result: Dict[str, Any] = {"method": "acs", "id": msg_id}
             if debug:
                 result["body_preview"] = body
             return result
@@ -615,11 +615,15 @@ def send_alert_email(device_id: str, last_seen: str, subject_override: Optional[
 
     if not smtp_user or not smtp_password:
         logging.warning("SMTP credentials not configured. Skipping email alert.")
-        result = {"method": "none", "reason": "smtp_credentials_missing"}
+        result: Dict[str, Any] = {"method": "none", "reason": "smtp_credentials_missing"}
         if debug and acs_exception:
             result["acs_exception"] = acs_exception
         if debug:
             result["body_preview"] = body
+        return result
+    msg = MIMEMultipart()
+    msg['From'] = smtp_user or acs_sender
+    msg['To'] = recipient
     msg['Subject'] = subject
     msg.attach(MIMEText(body, 'plain'))
 
@@ -630,7 +634,7 @@ def send_alert_email(device_id: str, last_seen: str, subject_override: Optional[
         server.send_message(msg)
         server.quit()
         logging.info("Alert email sent to %s", recipient)
-        result = {"method": "smtp", "sent": True}
+        result: Dict[str, Any] = {"method": "smtp", "sent": True}
         if debug and acs_exception:
             result["acs_exception"] = acs_exception
         if debug:
@@ -638,11 +642,12 @@ def send_alert_email(device_id: str, last_seen: str, subject_override: Optional[
         return result
     except Exception as e:
         logging.error("Failed to send alert email via SMTP: %s", e)
-        result = {"method": "smtp", "sent": False, "error": str(e)}
+        result: Dict[str, Any] = {"method": "smtp", "sent": False, "error": str(e)}
         if debug and acs_exception:
             result["acs_exception"] = acs_exception
         if debug:
             result["body_preview"] = body
+        return result
 
 @app.function_name("checkDeviceHealth")
 @app.timer_trigger(schedule="0 */10 * * * *", arg_name="myTimer", run_on_startup=False, use_monitor=False) 
