@@ -421,7 +421,7 @@ def register_device(req: func.HttpRequest) -> func.HttpResponse:
 
     ip_address = payload.get("ip") or payload.get("deviceIp")
     port = payload.get("port")
-    device_type = payload.get("type", "stake_capsule")
+    device_type = payload.get("type", "soil_sensor")
 
     if not ip_address or not port:
         return json_response({"error": "ip and port are required"}, status=400)
