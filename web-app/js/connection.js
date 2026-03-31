@@ -2,7 +2,7 @@ import { state } from './state.js';
 import { showAlert, addLogEntry, setLoading, updateSensorDisplay, updateDeviceInfo } from './ui.js';
 import { updateChart, initChart } from './chart.js';
 
-const PROD_API_URL = 'https://soilrobot-func-dev.azurewebsites.net/api';
+const PROD_API_URL = 'https://soilrobot-apim-dev.azure-api.net/api';
 const LOCAL_API_URL = 'http://localhost:7071/api';
 
 export function getApiBaseUrl() { return state.useProd ? PROD_API_URL : LOCAL_API_URL; }
