@@ -7,7 +7,11 @@ import re
 import uuid
 from typing import Optional, Any, Dict
 from azure.data.tables import TableServiceClient, UpdateMode
-from zoneinfo import ZoneInfo
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None
 
 import smtplib
 from email.mime.text import MIMEText
@@ -18,7 +22,11 @@ app = func.FunctionApp()
 
 # Storage Configuration
 conn_str = os.getenv("STORAGE_CONNECTION_STRING") or os.getenv("AzureWebJobsStorage")
-table_service = TableServiceClient.from_connection_string(conn_str) if conn_str else None
+try:
+    table_service = TableServiceClient.from_connection_string(conn_str) if conn_str else None
+except Exception as ex:
+    logging.error("Failed to initialize TableServiceClient: %s", ex)
+    table_service = None
 
 def get_table_client(table_name: str):
     if not table_service:
@@ -590,8 +598,12 @@ def send_alert_email(device_id: str, last_seen: str, subject_override: Optional[
 
     now_utc = datetime.datetime.now(datetime.timezone.utc)
 
-    # Convert to Central Time (America/Chicago)
-    central_tz = ZoneInfo("America/Chicago")
+    # Convert to Central Time (America/Chicago). ZoneInfo may be unavailable on Python<3.9 in some runtimes.
+    if ZoneInfo:
+        central_tz = ZoneInfo("America/Chicago")
+    else:
+        central_tz = datetime.timezone(datetime.timedelta(hours=-5))  # fallback for CST (no DST shift)
+
     try:
         last_seen_central = last_seen_dt_utc.astimezone(central_tz)
     except Exception:
