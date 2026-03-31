@@ -22,9 +22,12 @@ function sanitizeChartOptions(opts) {
         // Coerce typical fields that Chart.js expects as strings
         if (v !== null && typeof v !== 'function' && typeof v !== 'string') {
           const key = k.toLowerCase();
-          if (key.includes('color') || key === 'text' || key === 'position' || key === 'type' || key === 'label') {
+          if (key.includes('color') || key.includes('label') || key === 'text' || key === 'position' || key === 'type' || key === 'fontfamily') {
             try { obj[k] = String(v); console.warn('sanitizeChartOptions coerced', curPath, 'to string'); } catch (e) { /* ignore */ }
           }
+        } else if ((v === null || v === undefined) && (k.toLowerCase().includes('text') || k === 'label' || k === 'title')) {
+          // Replace null/undefined text/label fields with empty string
+          try { obj[k] = ''; console.warn('sanitizeChartOptions coerced', curPath, 'null/undefined to empty string'); } catch (e) { /* ignore */ }
         }
       }
     }
@@ -53,14 +56,13 @@ export function initChart() {
 
 export function normalizeAxes() {
   if (!state.chart) return;
-  const existingX = state.chart.options?.scales?.x || { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } };
-  const scales = { x: existingX };
+  const scales = { x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } } };
   let firstVisibleFound = false;
   state.chart.data.datasets.forEach((ds, i) => {
     const axisId = getAxisId(i);
-    const pos = ds.assignedSide || getAxisPosition(i);
-    const axisColor = ds.axisColor || '#94a3b8';
-    const titleText = ds.axisTitle || ds.label || '';
+    const pos = String(ds.assignedSide || getAxisPosition(i));
+    const axisColor = String(ds.axisColor || '#94a3b8');
+    const titleText = String(ds.axisTitle || ds.label || '');
     const drawOnChartArea = !firstVisibleFound;
     if (!firstVisibleFound && !ds.hidden) firstVisibleFound = true;
     ds.yAxisID = axisId;
@@ -95,12 +97,16 @@ export function updateChart(history, timescale = '1h') {
   state.historyData = history; state.lastTimescale = timescale; tickFormatMode = timescale;
 
   // Safety: apply a minimal safe options set before mutating scales/other options
-  state.chart.options = Object.assign({}, state.chart.options || {}, {
+  // Start with fresh options to avoid circular references from previous chart updates
+  state.chart.options = {
+    responsive: true,
+    maintainAspectRatio: false,
     plugins: { legend: { labels: { color: '#cbd5f5' } } },
     scales: { x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } } }
-  });
+  };
   const sorted = [...history].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
   const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
+  if (state.chart && state.chart.data && state.chart.data.datasets[0]) { state.chart.data.datasets[0].label = String(state.chart.data.datasets[0].label || 'Humidity (%)'); }
   if (state.chart && state.chart.data && state.chart.data.datasets[1]) { state.chart.data.datasets[1].label = `Temp (${unitLabel})`; state.chart.data.datasets[1].axisTitle = `Temp (${unitLabel})`; }
   // Sanitize timestamps to handle variants like '+00:00Z' or '+00:00' that some browsers parse inconsistently
   const sanitizeTs = (ts) => {
@@ -149,8 +155,6 @@ export function updateChart(history, timescale = '1h') {
   if (firstValid && lastValid) {
     const min = new Date(sanitizeTs(firstValid.timestamp)).getTime();
     const max = new Date(sanitizeTs(lastValid.timestamp)).getTime();
-    state.chart.options.scales = state.chart.options.scales || {};
-    state.chart.options.scales.x = state.chart.options.scales.x || {};
     state.chart.options.scales.x.min = min;
     state.chart.options.scales.x.max = max;
 
@@ -180,12 +184,13 @@ export function updateChart(history, timescale = '1h') {
     // Attempt a safe fallback by replacing options with a minimal safe configuration then retry
     try {
       const safeOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
         plugins: { legend: { labels: { color: '#cbd5f5' } } },
         scales: { x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } } }
       };
-      console.warn('chart.update failed - applying safe options and retrying');
-      // Merge safeOptions into the chart options shallowly to avoid mutating unexpected fields
-      state.chart.options = Object.assign({}, state.chart.options || {}, safeOptions);
+      console.warn('chart.update failed - applying fresh safe options and retrying');
+      state.chart.options = safeOptions;
       state.chart.update('none');
       console.warn('chart.update retry succeeded with safe options');
       addLogEntry('Chart updated with safe options after error');
@@ -205,16 +210,20 @@ export function updateChart(history, timescale = '1h') {
           data: {
             labels: [],
             datasets: [
-              { label: 'Humidity (%)', borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', data: pointsHum, tension: 0.3, spanGaps: false },
-              { label: `Temp (${unitLabel})`, borderColor: '#f87171', data: pointsTemp, tension: 0.3, spanGaps: false }
+              { label: 'Humidity (%)', borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', data: pointsHum, tension: 0.3, spanGaps: false, yAxisID: 'y' },
+              { label: `Temp (${unitLabel})`, borderColor: '#f87171', data: pointsTemp, tension: 0.3, spanGaps: false, yAxisID: 'y1' }
             ]
           },
-          options: Object.assign({}, state.chart.options || {}, {
+          options: {
             responsive: true,
             maintainAspectRatio: false,
             plugins: { legend: { labels: { color: '#cbd5f5' } } },
-            scales: { x: Object.assign({ type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } }, (minX !== undefined && maxX !== undefined) ? { min: minX, max: maxX } : {}) }
-          })
+            scales: { 
+              x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' }, ...(minX !== undefined && maxX !== undefined ? { min: minX, max: maxX } : {}) },
+              y: { type: 'linear', display: true, position: 'right', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: true }, ticks: { color: '#3b82f6' }, title: { display: true, text: 'Humidity %', color: '#3b82f6' } },
+              y1: { type: 'linear', display: true, position: 'left', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: false }, ticks: { color: '#f87171' }, title: { display: true, text: `Temp (${unitLabel})`, color: '#f87171' } }
+            }
+          }
         });
         addLogEntry('Chart recreated after error');
       } catch (recreateErr) {

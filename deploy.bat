@@ -100,8 +100,32 @@ echo Deploying Azure Functions...
 cd functions
 python -m pip install -r requirements.txt
 if errorlevel 1 exit /b 1
-call func azure functionapp publish "%FUNCTION_APP%" --python
-if errorlevel 1 exit /b 1
+
+where func >nul 2>nul
+if errorlevel 1 (
+    if exist "%APPDATA%\npm\func.cmd" (
+        echo Using Functions Core Tools from %APPDATA%\npm\func.cmd
+        call "%APPDATA%\npm\func.cmd" azure functionapp publish "%FUNCTION_APP%" --python
+        if errorlevel 1 exit /b 1
+    ) else (
+        echo Functions Core Tools not found. Using zip deploy fallback...
+        set "FN_ZIP=%TEMP%\soilrobot-functions.zip"
+        if exist "%FN_ZIP%" del /f /q "%FN_ZIP%" >nul 2>nul
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path .\* -DestinationPath '%FN_ZIP%' -Force"
+        if errorlevel 1 (
+            echo ERROR: Failed to create function zip package.
+            exit /b 1
+        )
+        call az functionapp deployment source config-zip --name "%FUNCTION_APP%" --resource-group "%RESOURCE_GROUP%" --src "%FN_ZIP%"
+        if errorlevel 1 (
+            echo ERROR: Azure CLI zip deployment failed.
+            exit /b 1
+        )
+    )
+) else (
+    call func azure functionapp publish "%FUNCTION_APP%" --python
+    if errorlevel 1 exit /b 1
+)
 cd ..
 
 echo.
