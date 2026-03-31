@@ -2,7 +2,7 @@ import { state } from './state.js';
 import { showAlert, addLogEntry, setLoading, updateSensorDisplay, updateDeviceInfo } from './ui.js';
 import { updateChart, initChart } from './chart.js';
 
-const PROD_API_URL = 'https://soilrobot-apim-dev.azure-api.net/api';
+const PROD_API_URL = 'https://soilrobot-func-dev.azurewebsites.net/api';
 const LOCAL_API_URL = 'http://localhost:7071/api';
 
 export function getApiBaseUrl() { return state.useProd ? PROD_API_URL : LOCAL_API_URL; }
@@ -70,6 +70,35 @@ export async function refreshData(showLoading = false) {
   } finally {
     if (shouldShowLive) setLoading('liveSensorsCard', false);
     if (shouldShowTrends) setLoading('trendsCard', false);
+  }
+}
+
+export async function checkApiHealth() {
+  const baseUrl = getApiBaseUrl();
+  const statusEl = document.getElementById('healthStatus');
+
+  try {
+    const response = await fetch(`${baseUrl}/health`, { method: 'GET', mode: 'cors', cache: 'no-store' });
+    const text = await response.text();
+    const message = `API health: ${response.status} ${response.statusText} (${text || 'no body'})`;
+
+    if (statusEl) statusEl.textContent = message;
+    if (response.ok) {
+      showAlert('API health check passed', 'success');
+      addLogEntry(message);
+      return true;
+    }
+
+    showAlert(`API health check failed: ${response.status}`, 'error');
+    addLogEntry(message);
+    return false;
+  } catch (error) {
+    const msg = `API health check error: ${error?.message ?? error}`;
+    if (statusEl) statusEl.textContent = msg;
+    showAlert('Unable to reach API health endpoint', 'error');
+    addLogEntry(msg);
+    console.error(msg);
+    return false;
   }
 }
 

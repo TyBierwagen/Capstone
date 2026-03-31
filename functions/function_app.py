@@ -208,8 +208,11 @@ def store_sensor_entry(payload: dict) -> dict:
     
     client = get_table_client("SensorData")
     if client:
-        client.create_entity(entity=entry)
-        
+        try:
+            client.create_entity(entity=entry)
+        except Exception as e:
+            logging.error("Failed to save sensor entry to Table Storage: %s", e)
+
     # Also update/ensure device entry exists (propagate lastSeen if device supplied timestamp)
     try:
         persist_device(
@@ -509,7 +512,12 @@ def get_control_command(req: func.HttpRequest) -> func.HttpResponse:
 @app.function_name("healthCheck")
 @app.route(route="health", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def health_check(req: func.HttpRequest) -> func.HttpResponse:
-    return func.HttpResponse("OK", status_code=200)
+    headers = {
+        "Access-Control-Allow-Origin": "https://soil.tybierwagen.com",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+    }
+    return func.HttpResponse("OK", status_code=200, headers=headers)
 
 
 @app.function_name("testEmail")

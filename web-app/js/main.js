@@ -3,7 +3,7 @@ import { setupOverrideControls } from './override.js';
 import { state } from './state.js';
 import { showAlert, addLogEntry, clearLog } from './ui.js';
 import { initChart, toggleHumidity, toggleTemperature, updateChart } from './chart.js';
-import { refreshData, toggleConnection, updateActiveIp, updateActiveKey, toggleIpFilter, toggleTempUnit, toggleApiSource } from './connection.js';
+import { refreshData, toggleConnection, updateActiveIp, updateActiveKey, toggleIpFilter, toggleTempUnit, toggleApiSource, checkApiHealth } from './connection.js';
 
 // Wire UI controls and initialize modules
 document.addEventListener('DOMContentLoaded', () => {
@@ -31,6 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Wire UI elements
   const connectBtn = document.getElementById('connectBtn'); if (connectBtn) connectBtn.addEventListener('click', toggleConnection);
   const refreshBtn = document.getElementById('refreshNowBtn'); if (refreshBtn) refreshBtn.addEventListener('click', () => refreshData(true));
+  const healthBtn = document.getElementById('healthCheckBtn'); if (healthBtn) healthBtn.addEventListener('click', () => checkApiHealth());
   const clearLogBtn = document.getElementById('clearLogBtn'); if (clearLogBtn) clearLogBtn.addEventListener('click', clearLog);
 
   // time scale changes refresh chart data (use local history if available to avoid requiring reconnect)
