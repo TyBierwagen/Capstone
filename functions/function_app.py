@@ -229,7 +229,7 @@ def store_sensor_entry(payload: dict) -> dict:
             payload.get("deviceId", "unknown"),
             device_ip,
             payload.get("port", 80),
-            payload.get("deviceType", "stake_capsule"),
+            payload.get("deviceType", "soil_sensor"),
             last_seen=timestamp
         )
     except Exception as e:
