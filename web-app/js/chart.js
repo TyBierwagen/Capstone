@@ -9,6 +9,30 @@ let tickFormatMode = '1h';
 function getAxisId(index) { return index === 0 ? 'y' : 'y' + index; }
 function getAxisPosition(index) { return (index % 2 === 0) ? 'right' : 'left'; }
 
+function ensureDatasetAxisMeta() {
+  if (!state.chart?.data?.datasets) return;
+  const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
+  const defaults = [
+    { axisColor: '#3b82f6', axisTitle: 'Humidity %', label: 'Humidity (%)' },
+    { axisColor: '#f87171', axisTitle: `Temp (${unitLabel})`, label: `Temp (${unitLabel})` }
+  ];
+  state.chart.data.datasets.forEach((ds, i) => {
+    const d = defaults[i] || { axisColor: '#94a3b8', axisTitle: String(ds.label || ''), label: String(ds.label || '') };
+    if (!ds.axisColor) ds.axisColor = d.axisColor;
+    if (!ds.axisTitle) ds.axisTitle = d.axisTitle;
+    if (!ds.label) ds.label = d.label;
+  });
+}
+
+function syncVisibleOrderFromDatasets() {
+  if (!state.chart?.data?.datasets) return;
+  const visible = state.chart.data.datasets
+    .map((ds, i) => ({ ds, i }))
+    .filter(x => !x.ds.hidden)
+    .map(x => x.i);
+  state.visibleOrder = visible;
+}
+
 // Defensive sanitizer for Chart.js options: coerce common string fields to strings
 function sanitizeChartOptions(opts) {
   if (!opts || typeof opts !== 'object') return;
@@ -56,11 +80,37 @@ export function initChart() {
 
 export function normalizeAxes() {
   if (!state.chart) return;
-  const scales = { x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } } };
+  ensureDatasetAxisMeta();
+  syncVisibleOrderFromDatasets();
+  // Always ensure fresh date formatter for X axis
+  const dateFormatter = (value) => {
+    if (typeof value !== 'number') return '';
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return '';
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const year = d.getFullYear();
+    const hour = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    // Show date + time for shorter timescales, date only for longer ones
+    if (state.lastTimescale === '1h' || state.lastTimescale === '24h') {
+      return `${month}/${day} ${hour}:${min}`;
+    }
+    return `${month}/${day}/${year}`;
+  };
+  const scales = { x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', callback: dateFormatter } } };
   let firstVisibleFound = false;
   state.chart.data.datasets.forEach((ds, i) => {
     const axisId = getAxisId(i);
-    const pos = String(ds.assignedSide || getAxisPosition(i));
+    // Determine position based on visible order and current state
+    let pos = 'right'; // default
+    if (state.visibleOrder.length > 0) {
+      const visibleIndex = state.visibleOrder.indexOf(i);
+      if (visibleIndex >= 0) pos = (visibleIndex % 2 === 0) ? 'right' : 'left';
+    } else if (!ds.hidden) {
+      pos = getAxisPosition(i);
+    }
+    ds.assignedSide = pos;
     const axisColor = String(ds.axisColor || '#94a3b8');
     const titleText = String(ds.axisTitle || ds.label || '');
     const drawOnChartArea = !firstVisibleFound;
@@ -95,19 +145,44 @@ export function updateChart(history, timescale = '1h') {
   try {
   if (!state.chart || !history) return;
   state.historyData = history; state.lastTimescale = timescale; tickFormatMode = timescale;
+  ensureDatasetAxisMeta();
+  syncVisibleOrderFromDatasets();
 
   // Safety: apply a minimal safe options set before mutating scales/other options
   // Start with fresh options to avoid circular references from previous chart updates
+  const dateFormatter = (value) => {
+    if (typeof value !== 'number') return '';
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return '';
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const year = d.getFullYear();
+    const hour = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    // Show date + time for shorter timescales, date only for longer ones
+    if (timescale === '1h' || timescale === '24h') {
+      return `${month}/${day} ${hour}:${min}`;
+    }
+    return `${month}/${day}/${year}`;
+  };
   state.chart.options = {
     responsive: true,
     maintainAspectRatio: false,
     plugins: { legend: { labels: { color: '#cbd5f5' } } },
-    scales: { x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } } }
+    scales: { x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', callback: dateFormatter } } }
   };
   const sorted = [...history].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
   const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
-  if (state.chart && state.chart.data && state.chart.data.datasets[0]) { state.chart.data.datasets[0].label = String(state.chart.data.datasets[0].label || 'Humidity (%)'); }
-  if (state.chart && state.chart.data && state.chart.data.datasets[1]) { state.chart.data.datasets[1].label = `Temp (${unitLabel})`; state.chart.data.datasets[1].axisTitle = `Temp (${unitLabel})`; }
+  if (state.chart && state.chart.data && state.chart.data.datasets[0]) {
+    state.chart.data.datasets[0].label = String(state.chart.data.datasets[0].label || 'Humidity (%)');
+    state.chart.data.datasets[0].axisTitle = 'Humidity %';
+    state.chart.data.datasets[0].axisColor = '#3b82f6';
+  }
+  if (state.chart && state.chart.data && state.chart.data.datasets[1]) {
+    state.chart.data.datasets[1].label = `Temp (${unitLabel})`;
+    state.chart.data.datasets[1].axisTitle = `Temp (${unitLabel})`;
+    state.chart.data.datasets[1].axisColor = '#f87171';
+  }
   // Sanitize timestamps to handle variants like '+00:00Z' or '+00:00' that some browsers parse inconsistently
   const sanitizeTs = (ts) => {
     if (!ts) return null;
@@ -191,6 +266,10 @@ export function updateChart(history, timescale = '1h') {
       };
       console.warn('chart.update failed - applying fresh safe options and retrying');
       state.chart.options = safeOptions;
+      ensureDatasetAxisMeta();
+      syncVisibleOrderFromDatasets();
+      rebalanceAssignedSides();
+      normalizeAxes();
       state.chart.update('none');
       console.warn('chart.update retry succeeded with safe options');
       addLogEntry('Chart updated with safe options after error');
@@ -210,8 +289,8 @@ export function updateChart(history, timescale = '1h') {
           data: {
             labels: [],
             datasets: [
-              { label: 'Humidity (%)', borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', data: pointsHum, tension: 0.3, spanGaps: false, yAxisID: 'y' },
-              { label: `Temp (${unitLabel})`, borderColor: '#f87171', data: pointsTemp, tension: 0.3, spanGaps: false, yAxisID: 'y1' }
+              { label: 'Humidity (%)', borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', data: pointsHum, tension: 0.3, spanGaps: false, yAxisID: 'y', axisTitle: 'Humidity %', axisColor: '#3b82f6' },
+              { label: `Temp (${unitLabel})`, borderColor: '#f87171', data: pointsTemp, tension: 0.3, spanGaps: false, yAxisID: 'y1', axisTitle: `Temp (${unitLabel})`, axisColor: '#f87171' }
             ]
           },
           options: {
@@ -225,6 +304,7 @@ export function updateChart(history, timescale = '1h') {
             }
           }
         });
+        syncVisibleOrderFromDatasets();
         addLogEntry('Chart recreated after error');
       } catch (recreateErr) {
         console.error('chart recreate failed', recreateErr);

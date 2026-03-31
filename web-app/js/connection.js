@@ -13,9 +13,26 @@ export async function refreshData(showLoading = false) {
   // Only show loading if forced (manual refresh) OR if we have no data yet (initial connect)
   const shouldShowLive = showLoading || !state.latestData;
   const shouldShowTrends = showLoading || !state.historyData;
+  const timescale = document.getElementById('timeScale')?.value || '1h';
+  const isAllTime = timescale === 'all';
 
   if (shouldShowLive) setLoading('liveSensorsCard', true);
   if (shouldShowTrends) setLoading('trendsCard', true);
+  if (isAllTime && (showLoading || !state.historyData)) {
+    const chartContainer = document.querySelector('[style*="height: 300px"]');
+    if (chartContainer) {
+      chartContainer.style.position = 'relative';
+      let loader = chartContainer.querySelector('.chart-loading-overlay');
+      if (!loader) {
+        loader = document.createElement('div');
+        loader.className = 'chart-loading-overlay';
+        loader.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(5,7,15,0.7);display:flex;align-items:center;justify-content:center;z-index:10;border-radius:6px;';
+        loader.innerHTML = '<div style="text-align:center;"><div style="font-size:14px;color:#cbd5f5;margin-bottom:12px;">Loading historical data...</div><div style="width:30px;height:30px;border:3px solid rgba(99,102,241,0.3);border-top:3px solid #6366f1;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto;"></div></div>';
+        chartContainer.appendChild(loader);
+      }
+      loader.style.display = 'flex';
+    }
+  }
 
   try {
     const baseUrl = getApiBaseUrl();
@@ -70,6 +87,9 @@ export async function refreshData(showLoading = false) {
   } finally {
     if (shouldShowLive) setLoading('liveSensorsCard', false);
     if (shouldShowTrends) setLoading('trendsCard', false);
+    // Hide chart loading overlay
+    const loader = document.querySelector('.chart-loading-overlay');
+    if (loader) loader.style.display = 'none';
   }
 }
 

@@ -34,16 +34,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const healthBtn = document.getElementById('healthCheckBtn'); if (healthBtn) healthBtn.addEventListener('click', () => checkApiHealth());
   const clearLogBtn = document.getElementById('clearLogBtn'); if (clearLogBtn) clearLogBtn.addEventListener('click', clearLog);
 
-  // time scale changes refresh chart data (use local history if available to avoid requiring reconnect)
+  // time scale changes should always fetch fresh history immediately
   document.getElementById('timeScale')?.addEventListener('change', () => {
     const timescale = document.getElementById('timeScale')?.value || '1h';
-    if (state.historyData) {
-      // We already have history; just re-render using the selected scale
-      updateChart(state.historyData, timescale);
-    } else {
-      // No local history cached — fetch from API (may require connection)
+    if (state.isConnected) {
       refreshData(true);
+      return;
     }
+    // Fallback for disconnected mode: render local cache if present
+    if (state.historyData) updateChart(state.historyData, timescale);
   });
 
   // toggles and inputs
