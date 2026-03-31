@@ -19,9 +19,11 @@ jobs:
         with:
           submodules: true
           lfs: false
-      - name: Upgrade pip
+      - name: Ensure latest pip
         run: |
-          pip install --upgrade pip
+          python -m pip --version
+          python -m pip install --upgrade pip
+          python -m pip --version
       - name: Build And Deploy
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
