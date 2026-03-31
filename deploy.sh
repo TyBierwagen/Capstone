@@ -78,23 +78,21 @@ terraform apply tfplan
 
 # Get outputs
 echo "📊 Getting deployment outputs..."
-STORAGE_ACCOUNT=$(terraform output -raw storage_account_name)
 FUNCTION_APP=$(terraform output -raw function_app_name)
+STATIC_WEB_APP=$(terraform output -raw static_web_app_name)
 CDN_URL=$(terraform output -raw cdn_endpoint_url)
 STATIC_URL=$(terraform output -raw static_website_url)
 
 cd ..
 
 # Deploy Web Application
-echo "🌐 Deploying web application..."
-az storage blob upload-batch \
-    --account-name "$STORAGE_ACCOUNT" \
-    --source web-app \
-    --destination '$web' \
-    --overwrite \
-    --no-progress
+echo "🌐 Deploying web application to Static Web App..."
+az staticwebapp upload \
+    --name "$STATIC_WEB_APP" \
+    --resource-group "$(terraform output -raw resource_group_name)" \
+    --source ../web-app
 
-echo -e "${GREEN}✅ Web application deployed${NC}"
+echo -e "${GREEN}✅ Web application deployed to Static Web App${NC}"
 
 # Deploy Azure Functions
 echo "⚡ Deploying Azure Functions..."

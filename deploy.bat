@@ -2,6 +2,9 @@
 REM Deploy script for Soil Sensing Robot infrastructure and application (Windows)
 REM This script deploys the complete solution to Azure
 
+set MODE=%1
+if /I "%MODE%"=="frontend" goto frontend_only
+
 echo Starting deployment of Soil Sensing Robot...
 
 REM Check prerequisites
@@ -66,22 +69,24 @@ call terraform apply tfplan
 
 REM Get outputs
 echo Getting deployment outputs...
-for /f "delims=" %%i in ('terraform output -raw storage_account_name') do set STORAGE_ACCOUNT=%%i
 for /f "delims=" %%i in ('terraform output -raw function_app_name') do set FUNCTION_APP=%%i
+for /f "delims=" %%i in ('terraform output -raw static_web_app_name') do set STATIC_WEB_APP=%%i
+for /f "delims=" %%i in ('terraform output -raw resource_group_name') do set RESOURCE_GROUP=%%i
 for /f "delims=" %%i in ('terraform output -raw cdn_endpoint_url') do set CDN_URL=%%i
 for /f "delims=" %%i in ('terraform output -raw static_website_url') do set STATIC_URL=%%i
 
 cd ..
 
 REM Deploy Web Application
-echo Deploying web application...
-call az storage blob upload-batch ^
-    --account-name "%STORAGE_ACCOUNT%" ^
-    --source web-app ^
-    --destination $web ^
-    --overwrite
+echo Deploying web application to Static Web App...
+call az staticwebapp upload ^
+    --name "%STATIC_WEB_APP%" ^
+    --resource-group "%RESOURCE_GROUP%" ^
+    --source web-app
 
-echo Web application deployed
+echo Web application deployed to Static Web App
+
+if /I "%MODE%"=="frontend" goto done
 
 REM Deploy Azure Functions
 echo Deploying Azure Functions...
@@ -104,4 +109,32 @@ echo    1. Open the CDN URL in your browser
 echo    2. Configure your microcontroller to connect to WiFi
 echo    3. Enter the microcontroller IP address in the web interface
 echo    4. Monitor sensor data in real-time
+
+goto end
+
+:frontend_only
+REM Frontend-only deployment path
+echo Frontend-only deploy: using Static Web App upload
+cd terraform
+for /f "delims=" %%i in ('terraform output -raw static_web_app_name') do set STATIC_WEB_APP=%%i
+for /f "delims=" %%i in ('terraform output -raw resource_group_name') do set RESOURCE_GROUP=%%i
+cd ..
+call az staticwebapp upload ^
+    --name "%STATIC_WEB_APP%" ^
+    --resource-group "%RESOURCE_GROUP%" ^
+    --source web-app
+
+echo Frontend-only deployment complete.
+
+goto done
+
+:done
+
+echo.
+echo Deployment complete!
+echo.
+
+goto end
+
+:end
 echo.

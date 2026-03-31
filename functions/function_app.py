@@ -3,6 +3,7 @@ import datetime
 import json
 import logging
 import os
+import re
 import uuid
 from typing import Optional, Any, Dict
 from azure.data.tables import TableServiceClient, UpdateMode
@@ -53,18 +54,40 @@ def format_timedelta(seconds: float) -> str:
 
 def sanitize_timestamp(value):
     """Normalize timestamp inputs to an ISO string with a trailing 'Z'.
-    Handles datetime objects and strings like '2026-01-21T17:55:38+00:00Z' or '...+00:00'."""
+    Accepts datetime, ISO strings, and epoch seconds or milliseconds (int/float)."""
     if not value:
         return None
+    # Numeric epochs (seconds or milliseconds)
+    if isinstance(value, (int, float)):
+        try:
+            v = float(value)
+            if v > 1e12:
+                dt = datetime.datetime.fromtimestamp(v / 1000.0, datetime.timezone.utc)
+            elif v > 1e9:
+                dt = datetime.datetime.fromtimestamp(v, datetime.timezone.utc)
+            else:
+                return None
+            return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        except Exception:
+            return None
     if isinstance(value, datetime.datetime):
         return value.replace(microsecond=0).isoformat().replace("+00:00", "Z")
     if isinstance(value, str):
         v = value.strip()
-        # Normalize common problematic suffixes
         v = v.replace("+00:00Z", "Z").replace("+00:00", "Z")
-        return v
+        # If it's a pure 10-digit epoch in seconds, convert
+        if re.match(r'^\d{10}$', v):
+            try:
+                dt = datetime.datetime.fromtimestamp(int(v), datetime.timezone.utc)
+                return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            except Exception:
+                pass
+        try:
+            parsed = datetime.datetime.fromisoformat(v.replace("Z", "+00:00"))
+            return parsed.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        except Exception:
+            return v
     try:
-        # Fallback: try parsing to datetime then format to ISO Z
         parsed = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         return parsed.replace(microsecond=0).isoformat().replace("+00:00", "Z")
     except Exception:
@@ -87,7 +110,7 @@ def generate_device_id() -> str:
     return f"dev_{uuid.uuid4().hex[:16]}"
 
 
-def persist_device(device_id: str, ip_address: str, port: int, device_type: str) -> dict:
+def persist_device(device_id: str, ip_address: str, port: int, device_type: str, last_seen: Optional[str] = None) -> dict:
     now = now_iso()
     client = get_table_client("Devices")
     
@@ -100,6 +123,7 @@ def persist_device(device_id: str, ip_address: str, port: int, device_type: str)
             pass
 
     registered_at = existing["registeredAt"] if existing else now
+    last_seen_value = last_seen or now
     
     device_info = {
         "PartitionKey": "Device",
@@ -109,7 +133,7 @@ def persist_device(device_id: str, ip_address: str, port: int, device_type: str)
         "port": port,
         "type": device_type,
         "registeredAt": registered_at,
-        "lastSeen": now,
+        "lastSeen": last_seen_value,
         "status": "active",
     }
     
@@ -120,9 +144,39 @@ def persist_device(device_id: str, ip_address: str, port: int, device_type: str)
 
 
 def store_sensor_entry(payload: dict) -> dict:
-    # Use server time consistently for SensorData to ensure reliable charting
-    now = datetime.datetime.now(datetime.timezone.utc)
-    timestamp = now.replace(microsecond=0).isoformat() + "Z"
+    # Prefer device-provided timestamp when valid; otherwise use server time.
+    device_ts_raw = payload.get("timestamp")
+    parsed_dt = None
+    if device_ts_raw:
+        try:
+            if isinstance(device_ts_raw, (int, float)):
+                v = float(device_ts_raw)
+                if v > 1e12:
+                    parsed_dt = datetime.datetime.fromtimestamp(v / 1000.0, datetime.timezone.utc)
+                elif v > 1e9:
+                    parsed_dt = datetime.datetime.fromtimestamp(v, datetime.timezone.utc)
+                else:
+                    parsed_dt = None
+            elif isinstance(device_ts_raw, str):
+                s = device_ts_raw.strip().replace("+00:00Z", "Z").replace("+00:00", "Z")
+                if re.match(r'^\d{10}$', s):
+                    parsed_dt = datetime.datetime.fromtimestamp(int(s), datetime.timezone.utc)
+                else:
+                    try:
+                        parsed_dt = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+                    except Exception:
+                        parsed_dt = None
+        except Exception:
+            parsed_dt = None
+
+    if parsed_dt:
+        ts_dt = parsed_dt.replace(microsecond=0)
+        timestamp = ts_dt.isoformat().replace("+00:00", "Z")
+        now = ts_dt
+    else:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        timestamp = now.replace(microsecond=0).isoformat() + "Z"
+
     device_ip = payload.get("deviceIp", "unknown")
     
     entry = {
@@ -148,18 +202,19 @@ def store_sensor_entry(payload: dict) -> dict:
     if client:
         client.create_entity(entity=entry)
         
-    # Also update/ensure device entry exists
+    # Also update/ensure device entry exists (propagate lastSeen if device supplied timestamp)
     try:
         persist_device(
             payload.get("deviceId", "unknown"),
             device_ip,
             payload.get("port", 80),
-            payload.get("deviceType", "soil_sensor")
+            payload.get("deviceType", "soil_sensor"),
+            last_seen=timestamp
         )
     except Exception as e:
         logging.error(f"Failed to auto-persist device: {e}")
         
-    logging.info("Sensor data recorded for %s", device_ip)
+    logging.info("Sensor data recorded for %s (device_ts_provided=%s)", device_ip, bool(parsed_dt))
     return entry
 
 

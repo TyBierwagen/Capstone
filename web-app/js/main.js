@@ -2,7 +2,7 @@ import './robot.js';
 import { setupOverrideControls } from './override.js';
 import { state } from './state.js';
 import { showAlert, addLogEntry, clearLog } from './ui.js';
-import { initChart, toggleHumidity, toggleTemperature } from './chart.js';
+import { initChart, toggleHumidity, toggleTemperature, updateChart } from './chart.js';
 import { refreshData, toggleConnection, updateActiveIp, updateActiveKey, toggleIpFilter, toggleTempUnit, toggleApiSource } from './connection.js';
 
 // Wire UI controls and initialize modules
@@ -33,8 +33,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const refreshBtn = document.getElementById('refreshNowBtn'); if (refreshBtn) refreshBtn.addEventListener('click', () => refreshData(true));
   const clearLogBtn = document.getElementById('clearLogBtn'); if (clearLogBtn) clearLogBtn.addEventListener('click', clearLog);
 
-  // time scale changes refresh chart data
-  document.getElementById('timeScale')?.addEventListener('change', () => refreshData(true));
+  // time scale changes refresh chart data (use local history if available to avoid requiring reconnect)
+  document.getElementById('timeScale')?.addEventListener('change', () => {
+    const timescale = document.getElementById('timeScale')?.value || '1h';
+    if (state.historyData) {
+      // We already have history; just re-render using the selected scale
+      updateChart(state.historyData, timescale);
+    } else {
+      // No local history cached — fetch from API (may require connection)
+      refreshData(true);
+    }
+  });
 
   // toggles and inputs
   document.getElementById('apiSourceToggle')?.addEventListener('change', toggleApiSource);

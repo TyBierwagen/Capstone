@@ -9,13 +9,13 @@ output "storage_account_name" {
 }
 
 output "static_website_url" {
-  description = "URL of the static website"
-  value       = azurerm_storage_account.main.primary_web_endpoint
+  description = "URL of the frontend static website (Static Web App host)"
+  value       = azurerm_static_web_app.main.default_host_name
 }
 
 output "cdn_endpoint_url" {
-  description = "CDN endpoint URL for the static website"
-  value       = azurerm_storage_account.main.primary_web_endpoint
+  description = "CDN endpoint URL for the frontend site (Static Web App host)"
+  value       = azurerm_static_web_app.main.default_host_name
 }
 
 output "function_app_name" {
@@ -51,6 +51,11 @@ output "key_vault_uri" {
 
 output "static_web_app_url" {
   value = azurerm_static_web_app.main.default_host_name
+}
+
+output "static_web_app_name" {
+  description = "Name of the Static Web App"
+  value       = azurerm_static_web_app.main.name
 }
 
 # Convenience outputs for testing the email endpoint via API Management
