@@ -607,54 +607,6 @@
       
 
     <div class="grid">
-      <div class="card" style="margin-top: 12px; margin-bottom: 24px; grid-column: 1 / -1;">
-        <h2>Override Control</h2>
-        <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
-          <div class="form-row" style="min-width:220px;">
-            <label style="margin-bottom:6px;">Enable Override</label>
-            <label class="switch">
-              <input type="checkbox" id="overrideEnable">
-              <span class="slider"></span>
-            </label>
-          </div>
-          <div class="form-row" style="min-width:300px;">
-            <label style="margin-bottom:6px;">Manual Direction</label>
-            <div style="display:flex; align-items:center; gap:12px;">
-              <div id="overrideArrows" class="arrow-grid" style="display:grid; grid-template-columns: 40px 40px; gap:8px;">
-                <button class="arrow-btn" data-dir="up" title="Forward (Arrow Up / W)" aria-label="Up">▲</button>
-                <button class="arrow-btn" data-dir="right" title="Rotate Right (Arrow Right / D)" aria-label="Right">▶</button>
-                <button class="arrow-btn" data-dir="left" title="Rotate Left (Arrow Left / A)" aria-label="Left">◀</button>
-                <button class="arrow-btn" data-dir="down" title="Backward (Arrow Down / S)" aria-label="Down">▼</button>
-              </div>
-              <div style="display:flex; flex-direction:column; gap:6px;">
-                <span class="arrow-help">Use Arrow keys or <strong>W/A/S/D</strong> — Left/Right rotate</span>
-                <span id="overrideStatus" style="font-size:13px; color:#cbd5f5;">Last: --</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Robot Estimated Position</h2>
-        <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-          <div style="flex:1; min-width:220px;">
-            <canvas id="robotMap" class="robot-map" style="width:100%; height:240px; border-radius:12px; border:1px solid rgba(255,255,255,0.06); background: rgba(0,0,0,0.03);"></canvas>
-          </div>
-          <div style="min-width:180px;">
-            <div id="robotPosition" style="font-size:13px; color:#cbd5f5; margin-bottom:8px;">Position: (0, 0) — Facing: N (0°)</div>
-            <div style="font-size:12px; color:#94a3b8;">Trail shows past positions. Use <strong>Left/Right</strong> to rotate, <strong>Up/Down</strong> or <strong>W/S</strong> to move.</div>
-            <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
-              <button id="resetPositionBtn" class="plain">Reset Position</button>
-              <label style="font-size:12px; color:#94a3b8; display:flex; align-items:center; gap:6px;">
-                Trail limit:
-                <input id="trailLimitInput" type="number" min="1" value="200" style="width:80px; padding:6px; border-radius:6px; background: rgba(15,23,42,0.6); color:#f8fafc; border:1px solid rgba(255,255,255,0.06);" />
-              </label>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div class="card">
         <h2>Activity Log</h2>
         <div id="activityLog" class="log">
