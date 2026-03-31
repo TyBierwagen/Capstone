@@ -57,13 +57,16 @@ resource "azurerm_storage_table" "devices" {
   storage_account_name = azurerm_storage_account.main.name
 }
 
-# App Service Plan for Azure Functions
+# App Service Plan for Azure Functions (Flex/Elastic Premium)
 resource "azurerm_service_plan" "main" {
   name                = "${var.project_name}-asp-${var.environment}"
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
+  kind                = "FunctionApp"
+  reserved            = true
   os_type             = "Linux"
-  sku_name            = "Y1"  # Consumption plan for serverless
+  sku_name            = "EP1"  # Elastic Premium plan (recommended replacement for Linux Consumption)
+  maximum_elastic_worker_count = 20
   tags                = var.tags
 }
 
