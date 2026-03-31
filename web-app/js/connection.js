@@ -74,7 +74,8 @@ export async function refreshData(showLoading = false) {
 }
 
 export async function checkApiHealth() {
-  const baseUrl = getApiBaseUrl();
+  let baseUrl = getApiBaseUrl();
+  const failover = getFailoverApiUrl();
   const statusEl = document.getElementById('healthStatus');
 
   try {
@@ -84,12 +85,12 @@ export async function checkApiHealth() {
 
     if (statusEl) statusEl.textContent = message;
     if (response.ok) {
-      showAlert('API health check passed', 'success');
+      showAlert(`API health check passed (${baseUrl})`, 'success');
       addLogEntry(message);
       return true;
     }
 
-    showAlert(`API health check failed: ${response.status}`, 'error');
+    showAlert(`API health check failed: ${response.status} (${baseUrl})`, 'error');
     addLogEntry(message);
     return false;
   } catch (error) {

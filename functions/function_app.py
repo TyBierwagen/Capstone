@@ -106,6 +106,16 @@ def json_response(payload: dict, status: int = 200) -> func.HttpResponse:
     return func.HttpResponse(json.dumps(payload), status_code=status, mimetype="application/json")
 
 
+def safe_function(handler):
+    def wrapper(req: func.HttpRequest, *args, **kwargs):
+        try:
+            return handler(req, *args, **kwargs)
+        except Exception as ex:
+            logging.exception("Unhandled exception in function %s", handler.__name__)
+            return json_response({"error": "Internal server error", "details": str(ex)}, status=500)
+    return wrapper
+
+
 def parse_bool(value, default: bool = True) -> bool:
     if value is None:
         return default
@@ -399,6 +409,7 @@ def delete_control_command(device_ip: str) -> None:
 
 @app.function_name("registerDevice")
 @app.route(route="devices", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@safe_function
 def register_device(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("Device registration request received")
 
@@ -428,6 +439,7 @@ def register_device(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.function_name("postSensorData")
 @app.route(route="sensor-data", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
+@safe_function
 def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("Saving sensor data")
 
@@ -448,6 +460,7 @@ def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.function_name("getSensorData")
 @app.route(route="sensor-data", methods=["GET"], auth_level=func.AuthLevel.FUNCTION)
+@safe_function
 def get_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
     device_ip = req.params.get("deviceIp")
     device_id = req.params.get("deviceId")
@@ -472,6 +485,7 @@ def get_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.function_name("queueControlCommand")
 @app.route(route="control", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
+@safe_function
 def queue_control_command(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("Control command request")
 
@@ -493,6 +507,7 @@ def queue_control_command(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.function_name("getControlCommand")
 @app.route(route="control", methods=["GET"], auth_level=func.AuthLevel.FUNCTION)
+@safe_function
 def get_control_command(req: func.HttpRequest) -> func.HttpResponse:
     device_ip = req.params.get("deviceIp")
 
@@ -511,6 +526,7 @@ def get_control_command(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.function_name("healthCheck")
 @app.route(route="health", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@safe_function
 def health_check(req: func.HttpRequest) -> func.HttpResponse:
     headers = {
         "Access-Control-Allow-Origin": "https://soil.tybierwagen.com",
@@ -522,6 +538,7 @@ def health_check(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.function_name("testEmail")
 @app.route(route="test-email", methods=["GET","POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@safe_function
 def test_email(req: func.HttpRequest) -> func.HttpResponse:
     """
     Trigger a test alert email. Query/body params:
