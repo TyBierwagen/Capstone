@@ -2,7 +2,7 @@ import './robot.js';
 import { setupOverrideControls } from './override.js';
 import { state } from './state.js';
 import { showAlert, addLogEntry, clearLog } from './ui.js';
-import { initChart, toggleHumidity, toggleTemperature, updateChart } from './chart.js';
+import { initChart, toggleHumidity, toggleTemperature, updateChart, rebalanceAssignedSides, normalizeAxes } from './chart.js';
 import { refreshData, toggleConnection, updateActiveIp, updateActiveKey, toggleIpFilter, toggleTempUnit, toggleApiSource, checkApiHealth } from './connection.js';
 
 // Wire UI controls and initialize modules
@@ -25,7 +25,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Restore chart visibility
   const showHumiditySaved = localStorage.getItem('showHumidity'); const showTempSaved = localStorage.getItem('showTemperature'); const humidityCheckbox = document.getElementById('showHumidity'); const tempCheckbox = document.getElementById('showTemperature'); if (humidityCheckbox) humidityCheckbox.checked = (showHumiditySaved !== 'false'); if (tempCheckbox) tempCheckbox.checked = (showTempSaved !== 'false');
   if (state.chart) { state.visibleOrder = []; if (humidityCheckbox && humidityCheckbox.checked) state.visibleOrder.push(0); if (tempCheckbox && tempCheckbox.checked) state.visibleOrder.push(1); state.chart.data.datasets.forEach((d, i) => { d.hidden = !state.visibleOrder.includes(i); if (i === 1) { const unitLabel = state.tempUnit === 'F' ? '°F' : '°C'; d.axisTitle = `Temp (${unitLabel})`; } });
-
+    rebalanceAssignedSides();
+    normalizeAxes();
+    state.chart.update('none');
   }
 
   // Wire UI elements

@@ -66,22 +66,36 @@ export function initChart() {
   state.chart = new Chart(ctx, {
     type: 'line',
     data: { labels: [], datasets: [
-      { label: 'Humidity (%)', borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', data: [], tension: 0.3, axisTitle: 'Humidity %', axisColor: '#3b82f6', xAxisID: 'x', pointRadius: 2, spanGaps: false },
-      { label: `Temp (${unitLabel})`, borderColor: '#f87171', data: [], tension: 0.3, axisTitle: `Temp (${unitLabel})`, axisColor: '#f87171', xAxisID: 'x', pointRadius: 2, spanGaps: false }
+      { label: 'Humidity (%)', borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', data: [], tension: 0.3, axisTitle: 'Humidity %', axisColor: '#3b82f6', xAxisID: 'x', yAxisID: 'y', pointRadius: 2, spanGaps: false },
+      { label: `Temp (${unitLabel})`, borderColor: '#f87171', data: [], tension: 0.3, axisTitle: `Temp (${unitLabel})`, axisColor: '#f87171', xAxisID: 'x', yAxisID: 'y1', pointRadius: 2, spanGaps: false }
     ]},
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: { legend: { labels: { color: '#cbd5f5' } } },
-      scales: { x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } } }
+      scales: {
+        x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
+        y: { type: 'linear', position: 'right', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: true }, ticks: { color: '#3b82f6' }, title: { display: true, text: 'Humidity %', color: '#3b82f6' } },
+        y1: { type: 'linear', position: 'left', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: false }, ticks: { color: '#f87171' }, title: { display: true, text: `Temp (${unitLabel})`, color: '#f87171' } }
+      }
     }
   });
+
+  // Keep initial state aligned with toggle behavior even before first data refresh.
+  syncVisibleOrderFromDatasets();
+  rebalanceAssignedSides();
+  normalizeAxes();
 }
 
 export function normalizeAxes() {
   if (!state.chart) return;
   ensureDatasetAxisMeta();
   syncVisibleOrderFromDatasets();
+  const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
+  const primaryDefaults = [
+    { axisColor: '#3b82f6', axisTitle: 'Humidity %', side: 'right' },
+    { axisColor: '#f87171', axisTitle: `Temp (${unitLabel})`, side: 'left' }
+  ];
   // Always ensure fresh date formatter for X axis
   const dateFormatter = (value) => {
     if (typeof value !== 'number') return '';
@@ -102,17 +116,22 @@ export function normalizeAxes() {
   let firstVisibleFound = false;
   state.chart.data.datasets.forEach((ds, i) => {
     const axisId = getAxisId(i);
-    // Determine position based on visible order and current state
-    let pos = 'right'; // default
-    if (state.visibleOrder.length > 0) {
-      const visibleIndex = state.visibleOrder.indexOf(i);
-      if (visibleIndex >= 0) pos = (visibleIndex % 2 === 0) ? 'right' : 'left';
-    } else if (!ds.hidden) {
-      pos = getAxisPosition(i);
+    // Keep primary metrics on consistent sides across refreshes.
+    let pos;
+    if (primaryDefaults[i]) {
+      pos = primaryDefaults[i].side;
+    } else {
+      pos = 'right';
+      if (state.visibleOrder.length > 0) {
+        const visibleIndex = state.visibleOrder.indexOf(i);
+        if (visibleIndex >= 0) pos = (visibleIndex % 2 === 0) ? 'right' : 'left';
+      } else if (!ds.hidden) {
+        pos = getAxisPosition(i);
+      }
     }
     ds.assignedSide = pos;
-    const axisColor = String(ds.axisColor || '#94a3b8');
-    const titleText = String(ds.axisTitle || ds.label || '');
+    const axisColor = String(ds.axisColor || primaryDefaults[i]?.axisColor || '#94a3b8');
+    const titleText = String(ds.axisTitle || primaryDefaults[i]?.axisTitle || ds.label || '');
     const drawOnChartArea = !firstVisibleFound;
     if (!firstVisibleFound && !ds.hidden) firstVisibleFound = true;
     ds.yAxisID = axisId;
@@ -147,6 +166,7 @@ export function updateChart(history, timescale = '1h') {
   state.historyData = history; state.lastTimescale = timescale; tickFormatMode = timescale;
   ensureDatasetAxisMeta();
   syncVisibleOrderFromDatasets();
+  const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
 
   // Safety: apply a minimal safe options set before mutating scales/other options
   // Start with fresh options to avoid circular references from previous chart updates
@@ -169,10 +189,13 @@ export function updateChart(history, timescale = '1h') {
     responsive: true,
     maintainAspectRatio: false,
     plugins: { legend: { labels: { color: '#cbd5f5' } } },
-    scales: { x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', callback: dateFormatter } } }
+    scales: {
+      x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', callback: dateFormatter } },
+      y: { type: 'linear', position: 'right', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: true }, ticks: { color: '#3b82f6' }, title: { display: true, text: 'Humidity %', color: '#3b82f6' } },
+      y1: { type: 'linear', position: 'left', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: false }, ticks: { color: '#f87171' }, title: { display: true, text: `Temp (${unitLabel})`, color: '#f87171' } }
+    }
   };
   const sorted = [...history].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
-  const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
   if (state.chart && state.chart.data && state.chart.data.datasets[0]) {
     state.chart.data.datasets[0].label = String(state.chart.data.datasets[0].label || 'Humidity (%)');
     state.chart.data.datasets[0].axisTitle = 'Humidity %';
