@@ -74,8 +74,7 @@ export async function refreshData(showLoading = false) {
 }
 
 export async function checkApiHealth() {
-  let baseUrl = getApiBaseUrl();
-  const failover = getFailoverApiUrl();
+  const baseUrl = getApiBaseUrl();
   const statusEl = document.getElementById('healthStatus');
 
   try {

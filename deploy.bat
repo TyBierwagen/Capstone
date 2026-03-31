@@ -1,100 +1,107 @@
 @echo off
+setlocal EnableExtensions
 REM Deploy script for Soil Sensing Robot infrastructure and application (Windows)
-REM This script deploys the complete solution to Azure
 
-set MODE=%1
-if /I "%MODE%"=="frontend" goto frontend_only
+cd /d "%~dp0"
+
+set "MODE=%~1"
+set "SWA_CMD="
 
 echo Starting deployment of Soil Sensing Robot...
-
-REM Check prerequisites
 echo Checking prerequisites...
 
 where az >nul 2>nul
-if %ERRORLEVEL% NEQ 0 (
+if errorlevel 1 (
     echo ERROR: Azure CLI not found. Please install it first.
     exit /b 1
 )
 
 where terraform >nul 2>nul
-if %ERRORLEVEL% NEQ 0 (
+if errorlevel 1 (
     echo ERROR: Terraform not found. Please install it first.
     exit /b 1
 )
 
 where node >nul 2>nul
-if %ERRORLEVEL% NEQ 0 (
+if errorlevel 1 (
     echo ERROR: Node.js not found. Please install it first.
     exit /b 1
 )
 
 echo All prerequisites found
 
-REM Check Azure login
+echo Checking Azure Static Web Apps support...
+call az staticwebapp upload --help >nul 2>nul
+if not errorlevel 1 set "SWA_CMD=upload"
+
+if not defined SWA_CMD (
+    call az staticwebapp deploy --help >nul 2>nul
+    if not errorlevel 1 set "SWA_CMD=deploy"
+)
+
+if defined SWA_CMD (
+    echo Using az staticwebapp command: %SWA_CMD%
+) else (
+    echo WARNING: az staticwebapp upload/deploy unavailable. Static Web App deploy will be skipped.
+)
+
 echo Checking Azure login status...
 call az account show >nul 2>nul
-if %ERRORLEVEL% NEQ 0 (
+if errorlevel 1 (
     echo Not logged in to Azure. Logging in...
     call az login
+    if errorlevel 1 (
+        echo ERROR: Azure login failed.
+        exit /b 1
+    )
 )
 
 echo Logged in to Azure
 
-REM Navigate to terraform directory
-cd terraform
+if /I "%MODE%"=="frontend" goto frontend_only
 
-REM Check if terraform.tfvars exists
+cd terraform
 if not exist "terraform.tfvars" (
     echo terraform.tfvars not found. Creating from example...
-    copy terraform.tfvars.example terraform.tfvars
+    copy terraform.tfvars.example terraform.tfvars >nul
     echo Please edit terraform.tfvars with your values and run this script again.
     exit /b 1
 )
 
-REM Initialize Terraform
 echo Initializing Terraform...
 call terraform init
+if errorlevel 1 exit /b 1
 
-REM Validate configuration
 echo Validating Terraform configuration...
 call terraform validate
+if errorlevel 1 exit /b 1
 
-REM Plan deployment
 echo Planning infrastructure deployment...
 call terraform plan -out=tfplan
+if errorlevel 1 exit /b 1
 
-REM Apply Terraform
 echo Deploying infrastructure (this may take 10-15 minutes)...
 call terraform apply tfplan
+if errorlevel 1 exit /b 1
 
-REM Get outputs
 echo Getting deployment outputs...
-for /f "delims=" %%i in ('terraform output -raw function_app_name') do set FUNCTION_APP=%%i
-for /f "delims=" %%i in ('terraform output -raw static_web_app_name') do set STATIC_WEB_APP=%%i
-for /f "delims=" %%i in ('terraform output -raw resource_group_name') do set RESOURCE_GROUP=%%i
-for /f "delims=" %%i in ('terraform output -raw cdn_endpoint_url') do set CDN_URL=%%i
-for /f "delims=" %%i in ('terraform output -raw static_website_url') do set STATIC_URL=%%i
-
+for /f "delims=" %%i in ('terraform output -raw function_app_name') do set "FUNCTION_APP=%%i"
+for /f "delims=" %%i in ('terraform output -raw static_web_app_name') do set "STATIC_WEB_APP=%%i"
+for /f "delims=" %%i in ('terraform output -raw resource_group_name') do set "RESOURCE_GROUP=%%i"
+for /f "delims=" %%i in ('terraform output -raw cdn_endpoint_url') do set "CDN_URL=%%i"
+for /f "delims=" %%i in ('terraform output -raw static_website_url') do set "STATIC_URL=%%i"
 cd ..
 
-REM Deploy Web Application
 echo Deploying web application to Static Web App...
-call az staticwebapp upload ^
-    --name "%STATIC_WEB_APP%" ^
-    --resource-group "%RESOURCE_GROUP%" ^
-    --source web-app
+call :deploy_swa
+if errorlevel 1 exit /b 1
 
-echo Web application deployed to Static Web App
-
-if /I "%MODE%"=="frontend" goto done
-
-REM Deploy Azure Functions
 echo Deploying Azure Functions...
 cd functions
-REM For Python apps, we use pip instead of npm
 python -m pip install -r requirements.txt
+if errorlevel 1 exit /b 1
 call func azure functionapp publish "%FUNCTION_APP%" --python
-
+if errorlevel 1 exit /b 1
 cd ..
 
 echo.
@@ -103,38 +110,43 @@ echo.
 echo Your application is available at:
 echo    Static Website: %STATIC_URL%
 echo    CDN URL: %CDN_URL%
-echo.
-echo Next steps:
-echo    1. Open the CDN URL in your browser
-echo    2. Configure your microcontroller to connect to WiFi
-echo    3. Enter the microcontroller IP address in the web interface
-echo    4. Monitor sensor data in real-time
-
 goto end
 
 :frontend_only
-REM Frontend-only deployment path
-echo Frontend-only deploy: using Static Web App upload
+echo Frontend-only deploy selected.
 cd terraform
-for /f "delims=" %%i in ('terraform output -raw static_web_app_name') do set STATIC_WEB_APP=%%i
-for /f "delims=" %%i in ('terraform output -raw resource_group_name') do set RESOURCE_GROUP=%%i
+for /f "delims=" %%i in ('terraform output -raw static_web_app_name') do set "STATIC_WEB_APP=%%i"
+for /f "delims=" %%i in ('terraform output -raw resource_group_name') do set "RESOURCE_GROUP=%%i"
 cd ..
-call az staticwebapp upload ^
-    --name "%STATIC_WEB_APP%" ^
-    --resource-group "%RESOURCE_GROUP%" ^
-    --source web-app
-
+call :deploy_swa
+if errorlevel 1 exit /b 1
 echo Frontend-only deployment complete.
-
-goto done
-
-:done
-
-echo.
-echo Deployment complete!
-echo.
-
-goto end
 
 :end
 echo.
+exit /b 0
+
+:deploy_swa
+if not defined SWA_CMD (
+    echo WARNING: Skipping Static Web App deployment because no supported az staticwebapp command is available.
+    exit /b 0
+)
+
+if /I "%SWA_CMD%"=="upload" (
+    call az staticwebapp upload --name "%STATIC_WEB_APP%" --resource-group "%RESOURCE_GROUP%" --source web-app
+    if not errorlevel 1 exit /b 0
+
+    rem If upload exists but fails, try deploy as a fallback.
+    call az staticwebapp deploy --help >nul 2>nul
+    if errorlevel 1 (
+        echo ERROR: static web app upload failed and deploy fallback is unavailable.
+        exit /b 1
+    )
+)
+
+call az staticwebapp deploy --name "%STATIC_WEB_APP%" --resource-group "%RESOURCE_GROUP%" --source web-app
+if errorlevel 1 (
+    echo ERROR: static web app deployment failed.
+    exit /b 1
+)
+exit /b 0
