@@ -34,7 +34,7 @@ jobs:
           app_location: "web-app" # App source code path
           api_location: "functions" # API source code path in this repo
           output_location: "" # Built app content directory; for plain static HTML/JS it is root of app_location
-          api_build_command: "python -m pip install --upgrade pip && pip install -r requirements.txt"
+          api_build_command: "/tmp/oryx/platforms/python/3.11.15/bin/python3.11 -m pip install --upgrade pip && /tmp/oryx/platforms/python/3.11.15/bin/python3.11 -m pip install -r requirements.txt"
           app_build_command: ""
           ###### End of Repository/Build Configurations ######
 
