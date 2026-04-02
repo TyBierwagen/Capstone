@@ -6,6 +6,21 @@ const PROD_API_URL = 'https://soilrobot-apim-dev.azure-api.net/api';
 const LOCAL_API_URL = 'http://localhost:7071/api';
 const ALL_TIMESCALES = ['1h', '1d', '1m', '1y', 'all'];
 
+function setChartLoadingOverlay(visible) {
+  const chartContainer = document.querySelector('[style*="height: 300px"]');
+  if (!chartContainer) return;
+  chartContainer.style.position = 'relative';
+  let loader = chartContainer.querySelector('.chart-loading-overlay');
+  if (!loader) {
+    loader = document.createElement('div');
+    loader.className = 'chart-loading-overlay';
+    loader.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(5,7,15,0.7);display:flex;align-items:center;justify-content:center;z-index:10;border-radius:6px;';
+    loader.innerHTML = '<div style="text-align:center;"><div style="font-size:14px;color:#cbd5f5;margin-bottom:12px;">Loading historical data...</div><div style="width:30px;height:30px;border:3px solid rgba(99,102,241,0.3);border-top:3px solid #6366f1;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto;"></div></div>';
+    chartContainer.appendChild(loader);
+  }
+  loader.style.display = visible ? 'flex' : 'none';
+}
+
 export function getApiBaseUrl() { return state.useProd ? PROD_API_URL : LOCAL_API_URL; }
 
 async function fetchHistoryByTimescale(baseUrl, params, fetchOptions, timescale) {
@@ -38,31 +53,86 @@ async function ensureAllTimescalesCached(baseUrl, params, fetchOptions, selected
   }
 }
 
+export async function fetchCustomDateRange(startDate, endDate) {
+  if (!state.isConnected) { 
+    showAlert('Connect to sensor database to fetch custom date range', 'error'); 
+    return null; 
+  }
+
+  try {
+    const baseUrl = getApiBaseUrl();
+    const params = new URLSearchParams();
+    if (state.deviceIp) params.append('deviceIp', state.deviceIp);
+    const apiKey = localStorage.getItem('functionKey');
+    const fetchOptions = { method: 'GET', mode: 'cors', cache: 'no-store' };
+    if (apiKey) params.append('code', apiKey);
+
+    // Fetch raw data for custom date range from API
+    setLoading('trendsCard', true);
+    setChartLoadingOverlay(true);
+    params.append('history', 'true');
+    params.append('timescale', 'all');
+    params.append('raw', 'true'); // Request unaggregated data
+    params.append('start', startDate.toISOString()); // ISO format with Z
+    params.append('end', endDate.toISOString());
+    
+    const response = await fetch(`${baseUrl}/sensor-data?${params.toString()}`, fetchOptions);
+    if (!response.ok) throw new Error(`Fetch failed with status ${response.status}`);
+    
+    const body = await response.json();
+    const filteredData = Array.isArray(body?.history) ? body.history : [];
+
+    console.debug(`Custom range fetch: received ${filteredData.length} raw rows from API`);
+    console.debug(`Date range: ${startDate.toLocaleString()} to ${endDate.toLocaleString()}`);
+    
+    if (filteredData.length > 0) {
+      console.debug(`First point: ${filteredData[0].timestamp}`, new Date(filteredData[0].timestamp).toLocaleString());
+      console.debug(`Last point: ${filteredData[filteredData.length - 1].timestamp}`, new Date(filteredData[filteredData.length - 1].timestamp).toLocaleString());
+    }
+
+    if (filteredData.length === 0) {
+      showAlert('No data found in the selected time range', 'warning');
+      addLogEntry(`No data points found between ${startDate.toLocaleString()} and ${endDate.toLocaleString()}`);
+      return null;
+    }
+
+    // Store custom date range in state
+    state.customDateRange = { start: startDate, end: endDate };
+    updateChart(filteredData, 'custom');
+    const startStr = startDate.toLocaleString();
+    const endStr = endDate.toLocaleString();
+    addLogEntry(`Fetched ${filteredData.length} raw data points for ${startStr} to ${endStr}`);
+    return filteredData;
+  } catch (error) {
+    console.error('Custom date range fetch failed', error);
+    showAlert(`Failed to fetch custom date range: ${error.message}`, 'error');
+    addLogEntry('Custom date range fetch failed');
+    return null;
+  } finally {
+    setLoading('trendsCard', false);
+    setChartLoadingOverlay(false);
+  }
+}
+
 export async function refreshData(showLoading = false) {
   if (!state.isConnected) { showAlert('Activate monitoring to refresh', 'error'); return; }
   
   // Only show loading if forced (manual refresh) OR if we have no data yet (initial connect)
   const shouldShowLive = showLoading || !state.latestData;
   const shouldShowTrends = showLoading || !state.historyData;
-  const timescale = document.getElementById('timeScale')?.value || '1h';
+  let timescale = document.getElementById('timeScale')?.value || '1h';
+  // If in custom mode, fetch full data and filter client-side
+  const inCustomMode = timescale === 'custom';
+  if (inCustomMode) timescale = 'all';
   const isAllTime = timescale === 'all';
 
   if (shouldShowLive) setLoading('liveSensorsCard', true);
   if (shouldShowTrends) setLoading('trendsCard', true);
   if (isAllTime && (showLoading || !state.historyData)) {
-    const chartContainer = document.querySelector('[style*="height: 300px"]');
-    if (chartContainer) {
-      chartContainer.style.position = 'relative';
-      let loader = chartContainer.querySelector('.chart-loading-overlay');
-      if (!loader) {
-        loader = document.createElement('div');
-        loader.className = 'chart-loading-overlay';
-        loader.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(5,7,15,0.7);display:flex;align-items:center;justify-content:center;z-index:10;border-radius:6px;';
-        loader.innerHTML = '<div style="text-align:center;"><div style="font-size:14px;color:#cbd5f5;margin-bottom:12px;">Loading historical data...</div><div style="width:30px;height:30px;border:3px solid rgba(99,102,241,0.3);border-top:3px solid #6366f1;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto;"></div></div>';
-        chartContainer.appendChild(loader);
-      }
-      loader.style.display = 'flex';
-    }
+    setChartLoadingOverlay(true);
+  }
+  if (inCustomMode && state.customDateRange) {
+    setChartLoadingOverlay(true);
   }
 
   try {
@@ -76,7 +146,22 @@ export async function refreshData(showLoading = false) {
 
     // Fetch latest telemetry plus currently selected chart range.
     const latestPromise = fetch(`${baseUrl}/sensor-data?${params.toString()}`, fetchOptions);
-    const selectedHistoryPromise = fetchHistoryByTimescale(baseUrl, params, fetchOptions, timescale);
+    let selectedHistoryPromise;
+    if (inCustomMode && state.customDateRange) {
+      const customParams = new URLSearchParams(params);
+      customParams.append('history', 'true');
+      customParams.append('timescale', 'all');
+      customParams.append('raw', 'true');
+      customParams.append('start', state.customDateRange.start.toISOString());
+      customParams.append('end', state.customDateRange.end.toISOString());
+      selectedHistoryPromise = fetch(`${baseUrl}/sensor-data?${customParams.toString()}`, fetchOptions).then(async (res) => {
+        if (!res.ok) throw new Error(`History fetch failed for custom range (${res.status})`);
+        const body = await res.json();
+        return Array.isArray(body?.history) ? body.history : [];
+      });
+    } else {
+      selectedHistoryPromise = fetchHistoryByTimescale(baseUrl, params, fetchOptions, timescale);
+    }
 
     const [latestResponse, selectedHistoryRows] = await Promise.all([
       latestPromise,
@@ -104,11 +189,22 @@ export async function refreshData(showLoading = false) {
     const latestData = await latestResponse.json();
     updateSensorDisplay(latestData);
     updateDeviceInfo(latestData);
-    updateChart(selectedHistoryRows, timescale);
+    
+    // If in custom mode, filter the fetched data to the custom date range
+    let chartData = selectedHistoryRows;
+    let chartTimescale = timescale;
+    if (inCustomMode && state.customDateRange) {
+      // Already server-filtered and raw when in custom mode.
+      chartData = selectedHistoryRows;
+      chartTimescale = 'custom';
+      addLogEntry(`Updated chart with ${chartData.length} points in custom range`);
+    }
+    updateChart(chartData, chartTimescale);
 
     // Warm remaining ranges in background so all timeframe switches work offline.
     ensureAllTimescalesCached(baseUrl, params, fetchOptions, timescale);
-    const scaleLabel = document.querySelector(`#timeScale option[value="${timescale}"]`)?.textContent || timescale;
+    const displayTimescale = inCustomMode ? 'custom range' : timescale;
+    const scaleLabel = document.querySelector(`#timeScale option[value="${document.getElementById('timeScale')?.value || '1h'}"]`)?.textContent || displayTimescale;
     addLogEntry(`Synced data for ${scaleLabel}`);
   } catch (error) { 
     console.error('Refresh error', error); 
@@ -118,8 +214,7 @@ export async function refreshData(showLoading = false) {
     if (shouldShowLive) setLoading('liveSensorsCard', false);
     if (shouldShowTrends) setLoading('trendsCard', false);
     // Hide chart loading overlay
-    const loader = document.querySelector('.chart-loading-overlay');
-    if (loader) loader.style.display = 'none';
+    setChartLoadingOverlay(false);
   }
 }
 

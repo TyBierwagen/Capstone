@@ -11,7 +11,8 @@ export const state = {
   lastTimescale: '1h',
   visibleOrder: [],
   robot: { x: 0, y: 0, angle: 0, trail: [{ x: 0, y: 0 }] },
-  robotTrailLimit: 200
+  robotTrailLimit: 200,
+  customDateRange: null
 };
 
 // Expose for global access for modules and legacy code

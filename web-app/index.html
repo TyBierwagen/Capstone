@@ -574,8 +574,22 @@
               <option value="1m">Past Month</option>
               <option value="1y">Past Year</option>
               <option value="all">All Time</option>
+              <option value="custom">Custom Range</option>
             </select>
             <button id="downloadTimeframeBtn" class="plain" style="width:auto; padding:8px 12px; font-size:13px;">Download CSV</button>
+          </div>
+        </div>
+        <div id="customTimeRangeContainer" style="display: none; margin-bottom: 12px; padding: 12px; background: rgba(99, 102, 241, 0.1); border-radius: 10px; border: 1px solid rgba(99, 102, 241, 0.3);">
+          <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end;">
+            <div>
+              <label style="font-size: 12px; color: #cbd5f5; margin-bottom: 4px;">From:</label>
+              <input type="datetime-local" id="customStartDate" style="padding: 8px; font-size: 12px;">
+            </div>
+            <div>
+              <label style="font-size: 12px; color: #cbd5f5; margin-bottom: 4px;">To:</label>
+              <input type="datetime-local" id="customEndDate" style="padding: 8px; font-size: 12px;">
+            </div>
+            <button id="applyCustomRangeBtn" style="width: auto; padding: 8px 16px; font-size: 12px; background: linear-gradient(135deg, #6366f1, #a855f7); margin-top: 4px;">Apply</button>
           </div>
         </div>
         <div id="cachedDataNote" style="display:none; margin-bottom:10px; padding:8px 10px; border-radius:10px; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); color:#fde68a; font-size:13px;">

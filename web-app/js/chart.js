@@ -59,9 +59,10 @@ function syncVisibleOrderFromDatasets() {
   state.visibleOrder = visible;
 }
 
-// Defensive sanitizer for Chart.js options: coerce common string fields to strings
+// Defensive sanitizer for Chart.js options: only coerce actual text/color fields, not numeric/boolean values
 function sanitizeChartOptions(opts) {
   if (!opts || typeof opts !== 'object') return;
+  const textOnlyFields = new Set(['color', 'text', 'position', 'type', 'fontfamily', 'fontface', 'align', 'textdecoration', 'transform', 'fontweight', 'fontstyle', 'fontvariant', 'fontstretch', 'linecap', 'linejoin', 'textanchor']);
   const walk = (obj, path = []) => {
     if (!obj || typeof obj !== 'object') return;
     for (const [k, v] of Object.entries(obj)) {
@@ -69,15 +70,15 @@ function sanitizeChartOptions(opts) {
       if (v && typeof v === 'object' && !Array.isArray(v)) {
         walk(v, path.concat(k));
       } else {
-        // Coerce typical fields that Chart.js expects as strings
-        if (v !== null && typeof v !== 'function' && typeof v !== 'string') {
+        // Only coerce fields that should strictly be strings (colors, text, positioning)
+        if (v !== null && typeof v !== 'function' && typeof v !== 'string' && typeof v !== 'boolean' && typeof v !== 'number') {
           const key = k.toLowerCase();
-          if (key.includes('color') || key.includes('label') || key === 'text' || key === 'position' || key === 'type' || key === 'fontfamily') {
-            try { obj[k] = String(v); console.warn('sanitizeChartOptions coerced', curPath, 'to string'); } catch (e) { /* ignore */ }
+          if (textOnlyFields.has(key) || key === 'color' || (key.endsWith('color') && !key.includes('backdrop'))) {
+            try { obj[k] = String(v); } catch (e) { /* ignore */ }
           }
-        } else if ((v === null || v === undefined) && (k.toLowerCase().includes('text') || k === 'label' || k === 'title')) {
+        } else if ((v === null || v === undefined) && (k.toLowerCase() === 'text' || k === 'label' || k === 'title')) {
           // Replace null/undefined text/label fields with empty string
-          try { obj[k] = ''; console.warn('sanitizeChartOptions coerced', curPath, 'null/undefined to empty string'); } catch (e) { /* ignore */ }
+          try { obj[k] = ''; } catch (e) { /* ignore */ }
         }
       }
     }
@@ -135,8 +136,8 @@ export function normalizeAxes() {
     const year = d.getFullYear();
     const hour = String(d.getHours()).padStart(2, '0');
     const min = String(d.getMinutes()).padStart(2, '0');
-    // Show date + time for shorter timescales, date only for longer ones
-    if (state.lastTimescale === '1h' || state.lastTimescale === '24h') {
+    // Show date + time for shorter timescales and custom ranges, date only for longer ones
+    if (state.lastTimescale === '1h' || state.lastTimescale === '24h' || state.lastTimescale === 'custom') {
       return `${month}/${day} ${hour}:${min}`;
     }
     return `${month}/${day}/${year}`;
@@ -208,8 +209,8 @@ export function updateChart(history, timescale = '1h') {
     const year = d.getFullYear();
     const hour = String(d.getHours()).padStart(2, '0');
     const min = String(d.getMinutes()).padStart(2, '0');
-    // Show date + time for shorter timescales, date only for longer ones
-    if (timescale === '1h' || timescale === '24h') {
+    // Show date + time for shorter timescales and custom ranges, date only for longer ones
+    if (timescale === '1h' || timescale === '24h' || timescale === 'custom') {
       return `${month}/${day} ${hour}:${min}`;
     }
     return `${month}/${day}/${year}`;

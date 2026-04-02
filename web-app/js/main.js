@@ -3,7 +3,7 @@ import { setupOverrideControls } from './override.js';
 import { state } from './state.js';
 import { showAlert, addLogEntry, clearLog } from './ui.js';
 import { initChart, toggleHumidity, toggleTemperature, updateChart, rebalanceAssignedSides, normalizeAxes, downloadCurrentTimeframeCsv } from './chart.js';
-import { refreshData, toggleConnection, updateActiveIp, updateActiveKey, toggleIpFilter, toggleTempUnit, toggleApiSource, checkApiHealth, updateConnectionStatus } from './connection.js';
+import { refreshData, toggleConnection, updateActiveIp, updateActiveKey, toggleIpFilter, toggleTempUnit, toggleApiSource, checkApiHealth, updateConnectionStatus, fetchCustomDateRange } from './connection.js';
 
 // Wire UI controls and initialize modules
 document.addEventListener('DOMContentLoaded', () => {
@@ -44,9 +44,44 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   const clearLogBtn = document.getElementById('clearLogBtn'); if (clearLogBtn) clearLogBtn.addEventListener('click', clearLog);
 
+  // Helper to format date in local timezone for datetime-local input
+  function formatDateTimeLocal(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hour = String(date.getHours()).padStart(2, '0');
+    const min = String(date.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hour}:${min}`;
+  }
+
+  // Helper to parse datetime-local input as local time (not UTC)
+  function parseDateTimeLocal(dateTimeLocalString) {
+    // Format: "2026-04-02T05:13"
+    const [datePart, timePart] = dateTimeLocalString.split('T');
+    const [year, month, day] = datePart.split('-').map(Number);
+    const [hour, minute] = timePart.split(':').map(Number);
+    // Create date in local timezone
+    return new Date(year, month - 1, day, hour, minute, 0, 0);
+  }
+
   // time scale changes should always fetch fresh history immediately
-  document.getElementById('timeScale')?.addEventListener('change', () => {
-    const timescale = document.getElementById('timeScale')?.value || '1h';
+  document.getElementById('timeScale')?.addEventListener('change', (e) => {
+    const timescale = e.target.value;
+    const customContainer = document.getElementById('customTimeRangeContainer');
+    
+    // Show custom date inputs if Custom Range is selected
+    if (timescale === 'custom') {
+      customContainer.style.display = 'grid';
+      // Set default to past 24 hours (using local timezone)
+      const now = new Date();
+      const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      document.getElementById('customStartDate').value = formatDateTimeLocal(yesterday);
+      document.getElementById('customEndDate').value = formatDateTimeLocal(now);
+      return;
+    } else {
+      customContainer.style.display = 'none';
+    }
+    
     if (state.isConnected) {
       refreshData(true);
       return;
@@ -57,6 +92,28 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     if (state.historyData) updateChart(state.historyData, timescale);
+  });
+
+  // Handle custom date range apply button
+  document.getElementById('applyCustomRangeBtn')?.addEventListener('click', async () => {
+    const startDateStr = document.getElementById('customStartDate').value;
+    const endDateStr = document.getElementById('customEndDate').value;
+    
+    if (!startDateStr || !endDateStr) {
+      showAlert('Please select both start and end dates', 'error');
+      return;
+    }
+    
+    const startDate = parseDateTimeLocal(startDateStr);
+    const endDate = parseDateTimeLocal(endDateStr);
+    
+    if (startDate >= endDate) {
+      showAlert('Start date must be before end date', 'error');
+      return;
+    }
+    
+    // Fetch data for custom date range from API
+    await fetchCustomDateRange(startDate, endDate);
   });
 
   // toggles and inputs

@@ -4,7 +4,9 @@
   "description": "A web application that connects to a microcontroller via WiFi for monitoring and controlling a soil sensing robot. The infrastructure is deployed on Microsoft Azure using Infrastructure as Code (Terraform).",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "deploy:functions": "deploy-functions.bat",
+    "deploy:functions:sh": "bash ./deploy-functions.sh"
   },
   "repository": {
     "type": "git",

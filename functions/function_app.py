@@ -313,7 +313,7 @@ def fetch_latest_sensor_entry(device_ip: Optional[str] = None, device_id: Option
     return {**dict(latest), "device": dict(device) if device else None}
 
 
-def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h", limit: int = 100) -> list:
+def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h", limit: Optional[int] = 100, raw: bool = False, start_timestamp: Optional[str] = None, end_timestamp: Optional[str] = None) -> list:
     client = get_table_client("SensorData")
     if not client:
         return []
@@ -322,13 +322,31 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
     if device_ip:
         filters.append(f"PartitionKey eq '{device_ip.replace('.', '_')}'")
     
-    # Time window filtering if timescale is specific
+    # Time window filtering
     now = datetime.datetime.now(datetime.timezone.utc)
     since = None
-    if timescale == "1h": since = now - datetime.timedelta(hours=1)
-    elif timescale == "1d": since = now - datetime.timedelta(days=1)
-    elif timescale == "1m": since = now - datetime.timedelta(days=30)
-    elif timescale == "1y": since = now - datetime.timedelta(days=365)
+    until = None
+    
+    # If custom start/end timestamps provided, use them
+    if start_timestamp:
+        try:
+            since = datetime.datetime.fromisoformat(start_timestamp.replace("Z", "+00:00"))
+        except Exception:
+            logging.warning(f"Failed to parse start_timestamp: {start_timestamp}")
+    
+    if end_timestamp:
+        try:
+            until = datetime.datetime.fromisoformat(end_timestamp.replace("Z", "+00:00"))
+        except Exception:
+            logging.warning(f"Failed to parse end_timestamp: {end_timestamp}")
+    
+    # If no custom timestamps, use timescale-based filtering
+    if not since:
+        if timescale == "1h": since = now - datetime.timedelta(hours=1)
+        elif timescale == "1d": since = now - datetime.timedelta(days=1)
+        elif timescale == "1m": since = now - datetime.timedelta(days=30)
+        elif timescale == "1y": since = now - datetime.timedelta(days=365)
+        # "all" has no time filter
 
     if since:
         filters.append(f"RowKey ge '{int(since.timestamp()):010d}_0'")
@@ -356,10 +374,19 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
         if r.get("timestamp"):
             r["timestamp"] = sanitize_timestamp(r.get("timestamp"))
 
+    # If custom end_timestamp provided, filter to that as well
+    if until:
+        raw_history = [r for r in raw_history if datetime.datetime.fromisoformat(r.get("timestamp", "").replace("Z", "+00:00")) <= until]
+
+    # If raw flag is set, return unaggregated data (for custom date-range queries)
+    if raw:
+        logging.debug(f"Returning {len(raw_history)} raw data points (no aggregation)")
+        return raw_history[-limit:] if limit else raw_history
+
     # If we have too many points, aggregate them to ~60 points for the chart
     target_points = 60
     if len(raw_history) <= target_points or timescale == "1h":
-        return raw_history[-limit:] if timescale == "all" else raw_history
+        return raw_history[-limit:] if (timescale == "all" and limit) else raw_history
 
     # Simple bucket aggregation
     chunk_size = len(raw_history) // target_points
@@ -470,8 +497,24 @@ def get_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
 
     if is_history:
         timescale = req.params.get("timescale", "1h")
-        limit = int(req.params.get("limit", 100))
-        data = fetch_sensor_history(device_ip=device_ip, timescale=timescale, limit=limit)
+        raw = parse_bool(req.params.get("raw"), False)
+        start_timestamp = req.params.get("start")
+        end_timestamp = req.params.get("end")
+        limit_param = req.params.get("limit")
+        if limit_param is not None:
+            limit = int(limit_param)
+        else:
+            # Preserve capped defaults for standard chart ranges, but keep custom/raw uncapped.
+            limit = None if raw else 100
+        
+        data = fetch_sensor_history(
+            device_ip=device_ip, 
+            timescale=timescale, 
+            limit=limit,
+            raw=raw,
+            start_timestamp=start_timestamp,
+            end_timestamp=end_timestamp
+        )
         return json_response({"count": len(data), "history": data, "timescale": timescale})
 
     entry = fetch_latest_sensor_entry(device_ip=device_ip, device_id=device_id)
