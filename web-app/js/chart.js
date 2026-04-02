@@ -26,6 +26,15 @@ function tooltipTitleFromTimestamp(items) {
   return formatDateDDMMYYYY(x);
 }
 
+function csvEscape(value) {
+  if (value === null || value === undefined) return '';
+  const str = String(value);
+  if (str.includes('"') || str.includes(',') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
 function ensureDatasetAxisMeta() {
   if (!state.chart?.data?.datasets) return;
   const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
@@ -378,6 +387,65 @@ export function updateChart(history, timescale = '1h') {
   }
 }
 
+export function downloadCurrentTimeframeCsv() {
+  if (!state.chart?.data?.datasets || state.chart.data.datasets.length < 2) {
+    return { ok: false, message: 'Chart data is not ready yet.' };
+  }
+
+  const humidityPoints = Array.isArray(state.chart.data.datasets[0].data) ? state.chart.data.datasets[0].data : [];
+  const tempPoints = Array.isArray(state.chart.data.datasets[1].data) ? state.chart.data.datasets[1].data : [];
+  const byTimestamp = new Map();
+
+  const mergePoints = (points, field) => {
+    points.forEach((p) => {
+      if (!p || typeof p.x !== 'number') return;
+      const existing = byTimestamp.get(p.x) || { x: p.x, humidity: '', temperature: '' };
+      const y = (p.y === null || p.y === undefined || Number.isNaN(Number(p.y))) ? '' : Number(p.y);
+      existing[field] = y;
+      byTimestamp.set(p.x, existing);
+    });
+  };
+
+  mergePoints(humidityPoints, 'humidity');
+  mergePoints(tempPoints, 'temperature');
+
+  const rows = [...byTimestamp.values()]
+    .sort((a, b) => a.x - b.x)
+    .filter(r => !Number.isNaN(new Date(r.x).getTime()));
+
+  if (rows.length === 0) {
+    return { ok: false, message: 'No points available for the current timeframe.' };
+  }
+
+  const tempCol = state.tempUnit === 'F' ? 'temperature_f' : 'temperature_c';
+  const lines = ['timestamp,humidity_percent,' + tempCol];
+  rows.forEach((r) => {
+    const ts = new Date(r.x).toISOString();
+    lines.push([
+      csvEscape(ts),
+      csvEscape(r.humidity),
+      csvEscape(r.temperature)
+    ].join(','));
+  });
+
+  const csv = lines.join('\n');
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const scale = state.lastTimescale || 'timescale';
+  const filename = `sensor-data-${scale}-${stamp}.csv`;
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+
+  addLogEntry(`Downloaded ${rows.length} chart rows (${scale})`);
+  return { ok: true, rows: rows.length, filename };
+}
+
 export function toggleHumidity(checked) { setAxisDisplayByDatasetIndex(0, checked); localStorage.setItem('showHumidity', checked); addLogEntry(`${checked ? 'Showing' : 'Hiding'} humidity on chart`); }
 export function toggleTemperature(checked) { setAxisDisplayByDatasetIndex(1, checked); localStorage.setItem('showTemperature', checked); addLogEntry(`${checked ? 'Showing' : 'Hiding'} temperature on chart`); }
 
@@ -385,3 +453,4 @@ export function toggleTemperature(checked) { setAxisDisplayByDatasetIndex(1, che
 window.initChart = initChart; window.updateChart = updateChart;
 window.toggleHumidity = (el) => toggleHumidity(el.checked);
 window.toggleTemperature = (el) => toggleTemperature(el.checked);
+window.downloadCurrentTimeframeCsv = downloadCurrentTimeframeCsv;

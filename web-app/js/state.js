@@ -7,6 +7,7 @@ export const state = {
   tempUnit: 'C',
   latestData: null,
   historyData: null,
+  historyCache: {},
   lastTimescale: '1h',
   visibleOrder: [],
   robot: { x: 0, y: 0, angle: 0, trail: [{ x: 0, y: 0 }] },

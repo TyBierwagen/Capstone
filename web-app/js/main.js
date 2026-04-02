@@ -2,8 +2,8 @@ import './robot.js';
 import { setupOverrideControls } from './override.js';
 import { state } from './state.js';
 import { showAlert, addLogEntry, clearLog } from './ui.js';
-import { initChart, toggleHumidity, toggleTemperature, updateChart, rebalanceAssignedSides, normalizeAxes } from './chart.js';
-import { refreshData, toggleConnection, updateActiveIp, updateActiveKey, toggleIpFilter, toggleTempUnit, toggleApiSource, checkApiHealth } from './connection.js';
+import { initChart, toggleHumidity, toggleTemperature, updateChart, rebalanceAssignedSides, normalizeAxes, downloadCurrentTimeframeCsv } from './chart.js';
+import { refreshData, toggleConnection, updateActiveIp, updateActiveKey, toggleIpFilter, toggleTempUnit, toggleApiSource, checkApiHealth, updateConnectionStatus } from './connection.js';
 
 // Wire UI controls and initialize modules
 document.addEventListener('DOMContentLoaded', () => {
@@ -34,6 +34,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const connectBtn = document.getElementById('connectBtn'); if (connectBtn) connectBtn.addEventListener('click', toggleConnection);
   const refreshBtn = document.getElementById('refreshNowBtn'); if (refreshBtn) refreshBtn.addEventListener('click', () => refreshData(true));
   const healthBtn = document.getElementById('healthCheckBtn'); if (healthBtn) healthBtn.addEventListener('click', () => checkApiHealth());
+  const downloadBtn = document.getElementById('downloadTimeframeBtn'); if (downloadBtn) downloadBtn.addEventListener('click', () => {
+    const result = downloadCurrentTimeframeCsv();
+    if (!result?.ok) {
+      showAlert(result?.message || 'Nothing to download yet.', 'error');
+      return;
+    }
+    showAlert(`Downloaded ${result.rows} rows`, 'success');
+  });
   const clearLogBtn = document.getElementById('clearLogBtn'); if (clearLogBtn) clearLogBtn.addEventListener('click', clearLog);
 
   // time scale changes should always fetch fresh history immediately
@@ -43,7 +51,11 @@ document.addEventListener('DOMContentLoaded', () => {
       refreshData(true);
       return;
     }
-    // Fallback for disconnected mode: render local cache if present
+    const cached = state.historyCache?.[timescale];
+    if (Array.isArray(cached) && cached.length > 0) {
+      updateChart(cached, timescale);
+      return;
+    }
     if (state.historyData) updateChart(state.historyData, timescale);
   });
 
@@ -76,6 +88,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (window.robot && typeof window.robot.setTrailLimit === 'function') window.robot.setTrailLimit(v);
     });
   }
+
+  // Keep chart controls disabled until connected.
+  updateConnectionStatus(state.isConnected);
 
   addLogEntry('Dashboard ready');
 });

@@ -4,8 +4,39 @@ import { updateChart, initChart } from './chart.js';
 
 const PROD_API_URL = 'https://soilrobot-apim-dev.azure-api.net/api';
 const LOCAL_API_URL = 'http://localhost:7071/api';
+const ALL_TIMESCALES = ['1h', '1d', '1m', '1y', 'all'];
 
 export function getApiBaseUrl() { return state.useProd ? PROD_API_URL : LOCAL_API_URL; }
+
+async function fetchHistoryByTimescale(baseUrl, params, fetchOptions, timescale) {
+  const historyParams = new URLSearchParams(params);
+  historyParams.append('history', 'true');
+  historyParams.append('timescale', timescale);
+  const response = await fetch(`${baseUrl}/sensor-data?${historyParams.toString()}`, fetchOptions);
+  if (!response.ok) throw new Error(`History fetch failed for ${timescale}`);
+  const body = await response.json();
+  const rows = Array.isArray(body?.history) ? body.history : [];
+  state.historyCache[timescale] = rows;
+  return rows;
+}
+
+async function ensureAllTimescalesCached(baseUrl, params, fetchOptions, selectedTimescale) {
+  const missingTimescales = ALL_TIMESCALES.filter((ts) => {
+    if (ts === selectedTimescale) return false;
+    const cached = state.historyCache?.[ts];
+    return !(Array.isArray(cached) && cached.length > 0);
+  });
+
+  if (missingTimescales.length === 0) return;
+
+  try {
+    await Promise.all(missingTimescales.map((ts) => fetchHistoryByTimescale(baseUrl, params, fetchOptions, ts)));
+    addLogEntry(`Cached chart ranges: ${missingTimescales.join(', ')}`);
+  } catch (error) {
+    console.warn('Background cache prefetch failed', error);
+    addLogEntry('Some chart ranges could not be cached yet');
+  }
+}
 
 export async function refreshData(showLoading = false) {
   if (!state.isConnected) { showAlert('Activate monitoring to refresh', 'error'); return; }
@@ -43,14 +74,13 @@ export async function refreshData(showLoading = false) {
     const fetchOptions = { method: 'GET', mode: 'cors', cache: 'no-store' };
     if (apiKey) params.append('code', apiKey);
 
-    // Fetch both in parallel to save time
-    const historyParams = new URLSearchParams(params);
-    historyParams.append('history', 'true');
-    historyParams.append('timescale', timescale);
+    // Fetch latest telemetry plus currently selected chart range.
+    const latestPromise = fetch(`${baseUrl}/sensor-data?${params.toString()}`, fetchOptions);
+    const selectedHistoryPromise = fetchHistoryByTimescale(baseUrl, params, fetchOptions, timescale);
 
-    const [latestResponse, historyResponse] = await Promise.all([
-      fetch(`${baseUrl}/sensor-data?${params.toString()}`, fetchOptions),
-      fetch(`${baseUrl}/sensor-data?${historyParams.toString()}`, fetchOptions)
+    const [latestResponse, selectedHistoryRows] = await Promise.all([
+      latestPromise,
+      selectedHistoryPromise
     ]);
 
     if (latestResponse.status === 401) { 
@@ -74,10 +104,10 @@ export async function refreshData(showLoading = false) {
     const latestData = await latestResponse.json();
     updateSensorDisplay(latestData);
     updateDeviceInfo(latestData);
-    if (historyResponse.ok) { 
-      const historyData = await historyResponse.json(); 
-      updateChart(historyData.history, timescale); 
-    }
+    updateChart(selectedHistoryRows, timescale);
+
+    // Warm remaining ranges in background so all timeframe switches work offline.
+    ensureAllTimescalesCached(baseUrl, params, fetchOptions, timescale);
     const scaleLabel = document.querySelector(`#timeScale option[value="${timescale}"]`)?.textContent || timescale;
     addLogEntry(`Synced data for ${scaleLabel}`);
   } catch (error) { 
@@ -126,6 +156,29 @@ export function startAutoRefresh() { stopAutoRefresh(); refreshData(); const sec
 export function stopAutoRefresh() { if (state.refreshIntervalId) { clearInterval(state.refreshIntervalId); state.refreshIntervalId = null; addLogEntry('Auto-refresh paused'); } }
 
 export function toggleConnection() { if (state.isConnected) disconnect(); else connect(); }
+
+function hasCachedChartData() {
+  const selectedTimescale = document.getElementById('timeScale')?.value || state.lastTimescale || '1h';
+  const selectedCache = state.historyCache?.[selectedTimescale];
+  if (Array.isArray(selectedCache) && selectedCache.length > 0) {
+    const hasTimestampedRows = selectedCache.some((r) => r && r.timestamp);
+    if (hasTimestampedRows) return true;
+  }
+
+  if (Array.isArray(state.historyData) && state.historyData.length > 0) {
+    const hasTimestampedRows = state.historyData.some((r) => r && r.timestamp);
+    if (hasTimestampedRows) return true;
+  }
+
+  const datasets = state.chart?.data?.datasets;
+  if (!Array.isArray(datasets) || datasets.length === 0) return false;
+
+  return datasets.some((ds) => Array.isArray(ds.data) && ds.data.some((p) => {
+    if (!p || typeof p.x !== 'number') return false;
+    if (p.y === null || p.y === undefined) return false;
+    return !Number.isNaN(Number(p.y));
+  }));
+}
 
 export async function connect() {
   console.log('Connecting...');
@@ -176,7 +229,13 @@ export function updateConnectionStatus(connected) {
   
   const chartError = document.getElementById('chartError'); 
   if (chartError) {
-    chartError.style.display = connected ? 'none' : 'flex';
+    const shouldShowOverlay = !connected && !hasCachedChartData();
+    chartError.style.display = shouldShowOverlay ? 'flex' : 'none';
+  }
+
+  const cachedDataNote = document.getElementById('cachedDataNote');
+  if (cachedDataNote) {
+    cachedDataNote.style.display = connected ? 'none' : 'block';
   }
 }
 
@@ -224,7 +283,13 @@ export function toggleTempUnit() {
   const tempValueEl = document.getElementById('temperature'); 
   if (tempValueEl && tempValueEl.nextElementSibling) tempValueEl.nextElementSibling.textContent = state.tempUnit === 'F' ? '°F' : '°C'; 
   if (state.latestData) updateSensorDisplay(state.latestData); 
-  if (state.historyData) updateChart(state.historyData, state.lastTimescale); 
+  const selectedTimescale = document.getElementById('timeScale')?.value || state.lastTimescale || '1h';
+  const cached = state.historyCache?.[selectedTimescale];
+  if (Array.isArray(cached) && cached.length > 0) {
+    updateChart(cached, selectedTimescale);
+  } else if (state.historyData) {
+    updateChart(state.historyData, state.lastTimescale);
+  }
 }
 
 export function toggleApiSource() { 

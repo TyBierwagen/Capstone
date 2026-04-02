@@ -575,7 +575,11 @@
               <option value="1y">Past Year</option>
               <option value="all">All Time</option>
             </select>
+            <button id="downloadTimeframeBtn" class="plain" style="width:auto; padding:8px 12px; font-size:13px;">Download CSV</button>
           </div>
+        </div>
+        <div id="cachedDataNote" style="display:none; margin-bottom:10px; padding:8px 10px; border-radius:10px; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); color:#fde68a; font-size:13px;">
+          Using cached chart data. Reconnect to fetch live updates.
         </div>
         <div style="height: 300px; position: relative;">
           <div id="chartError" class="chart-error-overlay" style="display:flex;">
