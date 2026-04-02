@@ -9,6 +9,23 @@ let tickFormatMode = '1h';
 function getAxisId(index) { return index === 0 ? 'y' : 'y' + index; }
 function getAxisPosition(index) { return (index % 2 === 0) ? 'right' : 'left'; }
 
+function formatDateDDMMYYYY(value) {
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return '';
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${month}/${day}/${year}`;
+}
+
+function tooltipTitleFromTimestamp(items) {
+  if (!Array.isArray(items) || items.length === 0) return '';
+  const first = items[0];
+  const x = first?.parsed?.x ?? first?.raw?.x;
+  if (typeof x !== 'number') return '';
+  return formatDateDDMMYYYY(x);
+}
+
 function ensureDatasetAxisMeta() {
   if (!state.chart?.data?.datasets) return;
   const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
@@ -72,7 +89,10 @@ export function initChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: '#cbd5f5' } } },
+      plugins: {
+        legend: { labels: { color: '#cbd5f5' } },
+        tooltip: { callbacks: { title: tooltipTitleFromTimestamp } }
+      },
       scales: {
         x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
         y: { type: 'linear', position: 'right', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: true }, ticks: { color: '#3b82f6' }, title: { display: true, text: 'Humidity %', color: '#3b82f6' } },
@@ -188,7 +208,10 @@ export function updateChart(history, timescale = '1h') {
   state.chart.options = {
     responsive: true,
     maintainAspectRatio: false,
-    plugins: { legend: { labels: { color: '#cbd5f5' } } },
+    plugins: {
+      legend: { labels: { color: '#cbd5f5' } },
+      tooltip: { callbacks: { title: tooltipTitleFromTimestamp } }
+    },
     scales: {
       x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', callback: dateFormatter } },
       y: { type: 'linear', position: 'right', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: true }, ticks: { color: '#3b82f6' }, title: { display: true, text: 'Humidity %', color: '#3b82f6' } },
@@ -284,7 +307,10 @@ export function updateChart(history, timescale = '1h') {
       const safeOptions = {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: '#cbd5f5' } } },
+        plugins: {
+          legend: { labels: { color: '#cbd5f5' } },
+          tooltip: { callbacks: { title: tooltipTitleFromTimestamp } }
+        },
         scales: { x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } } }
       };
       console.warn('chart.update failed - applying fresh safe options and retrying');
@@ -319,7 +345,10 @@ export function updateChart(history, timescale = '1h') {
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { labels: { color: '#cbd5f5' } } },
+            plugins: {
+              legend: { labels: { color: '#cbd5f5' } },
+              tooltip: { callbacks: { title: tooltipTitleFromTimestamp } }
+            },
             scales: { 
               x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' }, ...(minX !== undefined && maxX !== undefined ? { min: minX, max: maxX } : {}) },
               y: { type: 'linear', display: true, position: 'right', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: true }, ticks: { color: '#3b82f6' }, title: { display: true, text: 'Humidity %', color: '#3b82f6' } },

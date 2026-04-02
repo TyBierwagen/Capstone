@@ -17,6 +17,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import traceback
+from functools import wraps
 
 app = func.FunctionApp()
 
@@ -107,9 +108,10 @@ def json_response(payload: dict, status: int = 200) -> func.HttpResponse:
 
 
 def safe_function(handler):
-    def wrapper(req: func.HttpRequest, *args, **kwargs):
+    @wraps(handler)
+    def wrapper(req: func.HttpRequest):
         try:
-            return handler(req, *args, **kwargs)
+            return handler(req)
         except Exception as ex:
             logging.exception("Unhandled exception in function %s", handler.__name__)
             return json_response({"error": "Internal server error", "details": str(ex)}, status=500)
