@@ -9,6 +9,7 @@ export const state = {
   historyData: null,
   historyCache: {},
   lastTimescale: '1h',
+  refreshInProgress: false,
   visibleOrder: [],
   robot: { x: 0, y: 0, angle: 0, trail: [{ x: 0, y: 0 }] },
   robotTrailLimit: 200,

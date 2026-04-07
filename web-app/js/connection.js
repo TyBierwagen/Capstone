@@ -116,6 +116,11 @@ export async function fetchCustomDateRange(startDate, endDate) {
 
 export async function refreshData(showLoading = false) {
   if (!state.isConnected) { showAlert('Activate monitoring to refresh', 'error'); return; }
+  if (state.refreshInProgress) {
+    console.debug('Refresh already in progress; skipping overlapping request');
+    return;
+  }
+  state.refreshInProgress = true;
   
   // Only show loading if forced (manual refresh) OR if we have no data yet (initial connect)
   const shouldShowLive = showLoading || !state.latestData;
@@ -137,7 +142,7 @@ export async function refreshData(showLoading = false) {
 
   try {
     const baseUrl = getApiBaseUrl();
-    const timescale = document.getElementById('timeScale')?.value || '1h';
+    const selectedTimescale = document.getElementById('timeScale')?.value || '1h';
     const params = new URLSearchParams();
     if (state.deviceIp) params.append('deviceIp', state.deviceIp);
     const apiKey = localStorage.getItem('functionKey');
@@ -147,6 +152,7 @@ export async function refreshData(showLoading = false) {
     // Fetch latest telemetry plus currently selected chart range.
     const latestPromise = fetch(`${baseUrl}/sensor-data?${params.toString()}`, fetchOptions);
     let selectedHistoryPromise;
+    let historyFetchError = null;
     if (inCustomMode && state.customDateRange) {
       const customParams = new URLSearchParams(params);
       customParams.append('history', 'true');
@@ -154,19 +160,25 @@ export async function refreshData(showLoading = false) {
       customParams.append('raw', 'true');
       customParams.append('start', state.customDateRange.start.toISOString());
       customParams.append('end', state.customDateRange.end.toISOString());
-      selectedHistoryPromise = fetch(`${baseUrl}/sensor-data?${customParams.toString()}`, fetchOptions).then(async (res) => {
-        if (!res.ok) throw new Error(`History fetch failed for custom range (${res.status})`);
-        const body = await res.json();
-        return Array.isArray(body?.history) ? body.history : [];
-      });
+      selectedHistoryPromise = fetch(`${baseUrl}/sensor-data?${customParams.toString()}`, fetchOptions)
+        .then(async (res) => {
+          if (!res.ok) throw new Error(`History fetch failed for custom range (${res.status})`);
+          const body = await res.json();
+          return Array.isArray(body?.history) ? body.history : [];
+        })
+        .catch((error) => {
+          historyFetchError = error;
+          return [];
+        });
     } else {
-      selectedHistoryPromise = fetchHistoryByTimescale(baseUrl, params, fetchOptions, timescale);
+      selectedHistoryPromise = fetchHistoryByTimescale(baseUrl, params, fetchOptions, selectedTimescale)
+        .catch((error) => {
+          historyFetchError = error;
+          return [];
+        });
     }
 
-    const [latestResponse, selectedHistoryRows] = await Promise.all([
-      latestPromise,
-      selectedHistoryPromise
-    ]);
+    const latestResponse = await latestPromise;
 
     if (latestResponse.status === 401) { 
       showAlert('Unauthorized: Function key missing or invalid.', 'error'); 
@@ -189,20 +201,25 @@ export async function refreshData(showLoading = false) {
     const latestData = await latestResponse.json();
     updateSensorDisplay(latestData);
     updateDeviceInfo(latestData);
+    if (shouldShowLive) setLoading('liveSensorsCard', false);
     
-    // If in custom mode, filter the fetched data to the custom date range
-    let chartData = selectedHistoryRows;
-    let chartTimescale = timescale;
-    if (inCustomMode && state.customDateRange) {
+    let chartData = [];
+    let chartTimescale = selectedTimescale;
+
+    const selectedHistoryRows = await selectedHistoryPromise;
+    chartData = selectedHistoryRows;
+    if (historyFetchError) {
+      console.warn('History fetch failed', historyFetchError);
+      addLogEntry('Chart history is still loading or unavailable');
+    } else if (inCustomMode && state.customDateRange) {
       // Already server-filtered and raw when in custom mode.
-      chartData = selectedHistoryRows;
       chartTimescale = 'custom';
       addLogEntry(`Updated chart with ${chartData.length} points in custom range`);
     }
     updateChart(chartData, chartTimescale);
 
     // Warm remaining ranges in background so all timeframe switches work offline.
-    ensureAllTimescalesCached(baseUrl, params, fetchOptions, timescale);
+    ensureAllTimescalesCached(baseUrl, params, fetchOptions, selectedTimescale);
     const displayTimescale = inCustomMode ? 'custom range' : timescale;
     const scaleLabel = document.querySelector(`#timeScale option[value="${document.getElementById('timeScale')?.value || '1h'}"]`)?.textContent || displayTimescale;
     addLogEntry(`Synced data for ${scaleLabel}`);
@@ -215,6 +232,7 @@ export async function refreshData(showLoading = false) {
     if (shouldShowTrends) setLoading('trendsCard', false);
     // Hide chart loading overlay
     setChartLoadingOverlay(false);
+    state.refreshInProgress = false;
   }
 }
 
