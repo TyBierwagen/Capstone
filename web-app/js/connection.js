@@ -353,7 +353,7 @@ export function updateConnectionStatus(connected) {
 }
 
 export function resetSensorDisplay() {
-  ['moisture','temperature','humidity','ph','light','lastUpdated','commandStatus','deviceStatus','deviceType','deviceLastSeen'].forEach((id) => {
+  ['moisture','temperature','humidity','battery','ph','light','lastUpdated','commandStatus','deviceStatus','deviceType','deviceLastSeen'].forEach((id) => {
     const el = document.getElementById(id); 
     if (el) el.textContent = '--';
   });

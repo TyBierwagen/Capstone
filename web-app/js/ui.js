@@ -55,6 +55,7 @@ export function updateSensorDisplay(payload) {
   if (tempUnitEl) tempUnitEl.textContent = state.tempUnit === 'F' ? '°F' : '°C';
 
   updateValueIfIdExists('humidity', formatValue(payload.humidity, 1));
+  updateValueIfIdExists('battery', formatValue(payload.battery, 2));
   updateValueIfIdExists('ph', formatValue(payload.ph, 2));
   updateValueIfIdExists('light', payload.light ?? '--');
   

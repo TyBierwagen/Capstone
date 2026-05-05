@@ -2,7 +2,7 @@ import './robot.js';
 import { setupOverrideControls } from './override.js';
 import { state } from './state.js';
 import { showAlert, addLogEntry, clearLog } from './ui.js';
-import { initChart, toggleHumidity, toggleTemperature, updateChart, rebalanceAssignedSides, normalizeAxes, downloadCurrentTimeframeCsv } from './chart.js';
+import { initChart, toggleHumidity, toggleTemperature, toggleBattery, updateChart, rebalanceAssignedSides, normalizeAxes, downloadCurrentTimeframeCsv } from './chart.js';
 import { refreshData, toggleConnection, updateActiveIp, updateActiveKey, toggleIpFilter, toggleTempUnit, toggleApiSource, checkApiHealth, updateConnectionStatus, fetchCustomDateRange } from './connection.js';
 
 // Wire UI controls and initialize modules
@@ -23,8 +23,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initChart();
 
   // Restore chart visibility
-  const showHumiditySaved = localStorage.getItem('showHumidity'); const showTempSaved = localStorage.getItem('showTemperature'); const humidityCheckbox = document.getElementById('showHumidity'); const tempCheckbox = document.getElementById('showTemperature'); if (humidityCheckbox) humidityCheckbox.checked = (showHumiditySaved !== 'false'); if (tempCheckbox) tempCheckbox.checked = (showTempSaved !== 'false');
-  if (state.chart) { state.visibleOrder = []; if (humidityCheckbox && humidityCheckbox.checked) state.visibleOrder.push(0); if (tempCheckbox && tempCheckbox.checked) state.visibleOrder.push(1); state.chart.data.datasets.forEach((d, i) => { d.hidden = !state.visibleOrder.includes(i); if (i === 1) { const unitLabel = state.tempUnit === 'F' ? '°F' : '°C'; d.axisTitle = `Temp (${unitLabel})`; } });
+  const showHumiditySaved = localStorage.getItem('showHumidity'); const showTempSaved = localStorage.getItem('showTemperature'); const showBatterySaved = localStorage.getItem('showBattery'); const humidityCheckbox = document.getElementById('showHumidity'); const tempCheckbox = document.getElementById('showTemperature'); const batteryCheckbox = document.getElementById('showBattery'); if (humidityCheckbox) humidityCheckbox.checked = (showHumiditySaved !== 'false'); if (tempCheckbox) tempCheckbox.checked = (showTempSaved !== 'false'); if (batteryCheckbox) batteryCheckbox.checked = (showBatterySaved !== 'false');
+  if (state.chart) { state.visibleOrder = []; if (humidityCheckbox && humidityCheckbox.checked) state.visibleOrder.push(0); if (tempCheckbox && tempCheckbox.checked) state.visibleOrder.push(1); if (batteryCheckbox && batteryCheckbox.checked) state.visibleOrder.push(2); state.chart.data.datasets.forEach((d, i) => { d.hidden = !state.visibleOrder.includes(i); if (i === 1) { const unitLabel = state.tempUnit === 'F' ? '°F' : '°C'; d.axisTitle = `Temp (${unitLabel})`; } if (i === 2) { d.axisTitle = 'Battery (V)'; } });
     rebalanceAssignedSides();
     normalizeAxes();
     state.chart.update('none');
@@ -122,6 +122,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('tempUnitToggle')?.addEventListener('change', toggleTempUnit);
   document.getElementById('showHumidity')?.addEventListener('change', (e) => toggleHumidity(e.target.checked));
   document.getElementById('showTemperature')?.addEventListener('change', (e) => toggleTemperature(e.target.checked));
+  document.getElementById('showBattery')?.addEventListener('change', (e) => toggleBattery(e.target.checked));
 
   document.getElementById('deviceIp')?.addEventListener('input', updateActiveIp);
   document.getElementById('functionKey')?.addEventListener('input', updateActiveKey);

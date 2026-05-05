@@ -527,6 +527,11 @@
             <div class="sensor-value" id="humidity">--</div>
             <div class="sensor-unit">%</div>
           </div>
+          <div class="sensor-card">
+            <div class="sensor-label">Battery</div>
+            <div class="sensor-value" id="battery">--</div>
+            <div class="sensor-unit">V</div>
+          </div>
           <!-- <div class="sensor-card">
             <div class="sensor-label">pH Level</div>
             <div class="sensor-value" id="ph">--</div>
@@ -616,6 +621,13 @@
             <span style="font-size:13px; color:#94a3b8;">Temperature</span>
             <label class="switch small-switch" style="margin:0;">
               <input type="checkbox" id="showTemperature" checked>
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; background: rgba(255,255,255,0.02); padding:6px 10px; border-radius: 10px; border:1px solid rgba(255,255,255,0.04);">
+            <span style="font-size:13px; color:#94a3b8;">Battery</span>
+            <label class="switch small-switch" style="margin:0;">
+              <input type="checkbox" id="showBattery" checked>
               <span class="slider"></span>
             </label>
           </div>

@@ -40,7 +40,8 @@ function ensureDatasetAxisMeta() {
   const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
   const defaults = [
     { axisColor: '#3b82f6', axisTitle: 'Humidity %', label: 'Humidity (%)' },
-    { axisColor: '#f87171', axisTitle: `Temp (${unitLabel})`, label: `Temp (${unitLabel})` }
+    { axisColor: '#f87171', axisTitle: `Temp (${unitLabel})`, label: `Temp (${unitLabel})` },
+    { axisColor: '#fbbf24', axisTitle: 'Battery (V)', label: 'Battery (V)' }
   ];
   state.chart.data.datasets.forEach((ds, i) => {
     const d = defaults[i] || { axisColor: '#94a3b8', axisTitle: String(ds.label || ''), label: String(ds.label || '') };
@@ -94,7 +95,8 @@ export function initChart() {
     type: 'line',
     data: { labels: [], datasets: [
       { label: 'Humidity (%)', borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', data: [], tension: 0.3, axisTitle: 'Humidity %', axisColor: '#3b82f6', xAxisID: 'x', yAxisID: 'y', pointRadius: 2, spanGaps: false },
-      { label: `Temp (${unitLabel})`, borderColor: '#f87171', data: [], tension: 0.3, axisTitle: `Temp (${unitLabel})`, axisColor: '#f87171', xAxisID: 'x', yAxisID: 'y1', pointRadius: 2, spanGaps: false }
+      { label: `Temp (${unitLabel})`, borderColor: '#f87171', data: [], tension: 0.3, axisTitle: `Temp (${unitLabel})`, axisColor: '#f87171', xAxisID: 'x', yAxisID: 'y1', pointRadius: 2, spanGaps: false },
+      { label: 'Battery (V)', borderColor: '#fbbf24', data: [], tension: 0.3, axisTitle: 'Battery (V)', axisColor: '#fbbf24', xAxisID: 'x', yAxisID: 'y2', pointRadius: 2, spanGaps: false }
     ]},
     options: {
       responsive: true,
@@ -106,7 +108,8 @@ export function initChart() {
       scales: {
         x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
         y: { type: 'linear', position: 'right', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: true }, ticks: { color: '#3b82f6' }, title: { display: true, text: 'Humidity %', color: '#3b82f6' } },
-        y1: { type: 'linear', position: 'left', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: false }, ticks: { color: '#f87171' }, title: { display: true, text: `Temp (${unitLabel})`, color: '#f87171' } }
+        y1: { type: 'linear', position: 'left', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: false }, ticks: { color: '#f87171' }, title: { display: true, text: `Temp (${unitLabel})`, color: '#f87171' } },
+        y2: { type: 'linear', position: 'right', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: false }, ticks: { color: '#fbbf24' }, title: { display: true, text: 'Battery (V)', color: '#fbbf24' } }
       }
     }
   });
@@ -124,7 +127,8 @@ export function normalizeAxes() {
   const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
   const primaryDefaults = [
     { axisColor: '#3b82f6', axisTitle: 'Humidity %', side: 'right' },
-    { axisColor: '#f87171', axisTitle: `Temp (${unitLabel})`, side: 'left' }
+    { axisColor: '#f87171', axisTitle: `Temp (${unitLabel})`, side: 'left' },
+    { axisColor: '#fbbf24', axisTitle: 'Battery (V)', side: 'right' }
   ];
   // Always ensure fresh date formatter for X axis
   const dateFormatter = (value) => {
@@ -225,7 +229,8 @@ export function updateChart(history, timescale = '1h') {
     scales: {
       x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', callback: dateFormatter } },
       y: { type: 'linear', position: 'right', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: true }, ticks: { color: '#3b82f6' }, title: { display: true, text: 'Humidity %', color: '#3b82f6' } },
-      y1: { type: 'linear', position: 'left', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: false }, ticks: { color: '#f87171' }, title: { display: true, text: `Temp (${unitLabel})`, color: '#f87171' } }
+      y1: { type: 'linear', position: 'left', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: false }, ticks: { color: '#f87171' }, title: { display: true, text: `Temp (${unitLabel})`, color: '#f87171' } },
+      y2: { type: 'linear', position: 'right', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: false }, ticks: { color: '#fbbf24' }, title: { display: true, text: 'Battery (V)', color: '#fbbf24' } }
     }
   };
   const sorted = [...history].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
@@ -239,6 +244,11 @@ export function updateChart(history, timescale = '1h') {
     state.chart.data.datasets[1].axisTitle = `Temp (${unitLabel})`;
     state.chart.data.datasets[1].axisColor = '#f87171';
   }
+  if (state.chart && state.chart.data && state.chart.data.datasets[2]) {
+    state.chart.data.datasets[2].label = 'Battery (V)';
+    state.chart.data.datasets[2].axisTitle = 'Battery (V)';
+    state.chart.data.datasets[2].axisColor = '#fbbf24';
+  }
   // Sanitize timestamps to handle variants like '+00:00Z' or '+00:00' that some browsers parse inconsistently
   const sanitizeTs = (ts) => {
     if (!ts) return null;
@@ -250,6 +260,7 @@ export function updateChart(history, timescale = '1h') {
   // Build point arrays using timestamps (ms) so X spacing is linear with time
   const pointsHum = [];
   const pointsTemp = [];
+  const pointsBattery = [];
   sorted.forEach(h => {
     const raw = sanitizeTs(h.timestamp);
     const d = new Date(raw);
@@ -261,17 +272,24 @@ export function updateChart(history, timescale = '1h') {
     const tVal = (tRaw === null || tRaw === undefined || tRaw === '') ? null : Number(tRaw);
     const tFinal = (tVal === null) ? null : ((state.tempUnit === 'F') ? (tVal * 9/5) + 32 : tVal);
     pointsTemp.push({ x, y: tFinal });
+    const bRaw = h.battery;
+    const bVal = (bRaw === null || bRaw === undefined || bRaw === '') ? null : Number(bRaw);
+    pointsBattery.push({ x, y: bVal });
   });
 
   state.chart.data.labels = [];
   state.chart.data.datasets[0].data = pointsHum;
   state.chart.data.datasets[1].data = pointsTemp;
+  if (state.chart.data.datasets[2]) {
+    state.chart.data.datasets[2].data = pointsBattery;
+  }
 
   // Hide overlay if we have any valid points
   const humValid = pointsHum.some(p => p.y !== null && !Number.isNaN(p.y));
   const tempValid = pointsTemp.some(p => p.y !== null && !Number.isNaN(p.y));
+  const batteryValid = pointsBattery.some(p => p.y !== null && !Number.isNaN(p.y));
   const chartError = document.getElementById('chartError');
-  if (!humValid && !tempValid) {
+  if (!humValid && !tempValid && !batteryValid) {
     if (chartError) {
       chartError.style.display = 'flex';
       chartError.innerHTML = '<div><div style="font-size:16px;">No numeric data for selected timescale</div><div style="font-size:13px; color:#cbd5f5; margin-top:6px;">Try a different timescale or ensure sensor data exists</div></div>';
@@ -290,7 +308,7 @@ export function updateChart(history, timescale = '1h') {
     state.chart.options.scales.x.max = max;
 
     // Debug: show samples and computed range after first/last determination
-    console.debug('updateChart samples:', { pointsHum: pointsHum.slice(0,5), pointsTemp: pointsTemp.slice(0,5), first: new Date(min).toISOString(), last: new Date(max).toISOString(), tickFormatMode });
+    console.debug('updateChart samples:', { pointsHum: pointsHum.slice(0,5), pointsTemp: pointsTemp.slice(0,5), pointsBattery: pointsBattery.slice(0,5), first: new Date(min).toISOString(), last: new Date(max).toISOString(), tickFormatMode });
   }
 
   // Sanitize options before normalizing axes / updating chart to avoid Chart.js scriptable errors
@@ -349,7 +367,8 @@ export function updateChart(history, timescale = '1h') {
             labels: [],
             datasets: [
               { label: 'Humidity (%)', borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', data: pointsHum, tension: 0.3, spanGaps: false, yAxisID: 'y', axisTitle: 'Humidity %', axisColor: '#3b82f6' },
-              { label: `Temp (${unitLabel})`, borderColor: '#f87171', data: pointsTemp, tension: 0.3, spanGaps: false, yAxisID: 'y1', axisTitle: `Temp (${unitLabel})`, axisColor: '#f87171' }
+              { label: `Temp (${unitLabel})`, borderColor: '#f87171', data: pointsTemp, tension: 0.3, spanGaps: false, yAxisID: 'y1', axisTitle: `Temp (${unitLabel})`, axisColor: '#f87171' },
+              { label: 'Battery (V)', borderColor: '#fbbf24', data: pointsBattery, tension: 0.3, spanGaps: false, yAxisID: 'y2', axisTitle: 'Battery (V)', axisColor: '#fbbf24' }
             ]
           },
           options: {
@@ -362,7 +381,8 @@ export function updateChart(history, timescale = '1h') {
             scales: { 
               x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' }, ...(minX !== undefined && maxX !== undefined ? { min: minX, max: maxX } : {}) },
               y: { type: 'linear', display: true, position: 'right', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: true }, ticks: { color: '#3b82f6' }, title: { display: true, text: 'Humidity %', color: '#3b82f6' } },
-              y1: { type: 'linear', display: true, position: 'left', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: false }, ticks: { color: '#f87171' }, title: { display: true, text: `Temp (${unitLabel})`, color: '#f87171' } }
+              y1: { type: 'linear', display: true, position: 'left', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: false }, ticks: { color: '#f87171' }, title: { display: true, text: `Temp (${unitLabel})`, color: '#f87171' } },
+              y2: { type: 'linear', display: true, position: 'right', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: false }, ticks: { color: '#fbbf24' }, title: { display: true, text: 'Battery (V)', color: '#fbbf24' } }
             }
           }
         });
@@ -389,18 +409,19 @@ export function updateChart(history, timescale = '1h') {
 }
 
 export function downloadCurrentTimeframeCsv() {
-  if (!state.chart?.data?.datasets || state.chart.data.datasets.length < 2) {
+  if (!state.chart?.data?.datasets || state.chart.data.datasets.length < 3) {
     return { ok: false, message: 'Chart data is not ready yet.' };
   }
 
   const humidityPoints = Array.isArray(state.chart.data.datasets[0].data) ? state.chart.data.datasets[0].data : [];
   const tempPoints = Array.isArray(state.chart.data.datasets[1].data) ? state.chart.data.datasets[1].data : [];
+  const batteryPoints = Array.isArray(state.chart.data.datasets[2].data) ? state.chart.data.datasets[2].data : [];
   const byTimestamp = new Map();
 
   const mergePoints = (points, field) => {
     points.forEach((p) => {
       if (!p || typeof p.x !== 'number') return;
-      const existing = byTimestamp.get(p.x) || { x: p.x, humidity: '', temperature: '' };
+      const existing = byTimestamp.get(p.x) || { x: p.x, humidity: '', temperature: '', battery: '' };
       const y = (p.y === null || p.y === undefined || Number.isNaN(Number(p.y))) ? '' : Number(p.y);
       existing[field] = y;
       byTimestamp.set(p.x, existing);
@@ -409,6 +430,7 @@ export function downloadCurrentTimeframeCsv() {
 
   mergePoints(humidityPoints, 'humidity');
   mergePoints(tempPoints, 'temperature');
+  mergePoints(batteryPoints, 'battery');
 
   const rows = [...byTimestamp.values()]
     .sort((a, b) => a.x - b.x)
@@ -419,13 +441,14 @@ export function downloadCurrentTimeframeCsv() {
   }
 
   const tempCol = state.tempUnit === 'F' ? 'temperature_f' : 'temperature_c';
-  const lines = ['timestamp,humidity_percent,' + tempCol];
+  const lines = ['timestamp,humidity_percent,' + tempCol + ',battery_volts'];
   rows.forEach((r) => {
     const ts = new Date(r.x).toISOString();
     lines.push([
       csvEscape(ts),
       csvEscape(r.humidity),
-      csvEscape(r.temperature)
+      csvEscape(r.temperature),
+      csvEscape(r.battery)
     ].join(','));
   });
 
@@ -449,9 +472,11 @@ export function downloadCurrentTimeframeCsv() {
 
 export function toggleHumidity(checked) { setAxisDisplayByDatasetIndex(0, checked); localStorage.setItem('showHumidity', checked); addLogEntry(`${checked ? 'Showing' : 'Hiding'} humidity on chart`); }
 export function toggleTemperature(checked) { setAxisDisplayByDatasetIndex(1, checked); localStorage.setItem('showTemperature', checked); addLogEntry(`${checked ? 'Showing' : 'Hiding'} temperature on chart`); }
+export function toggleBattery(checked) { setAxisDisplayByDatasetIndex(2, checked); localStorage.setItem('showBattery', checked); addLogEntry(`${checked ? 'Showing' : 'Hiding'} battery on chart`); }
 
 // Expose for legacy calls
 window.initChart = initChart; window.updateChart = updateChart;
 window.toggleHumidity = (el) => toggleHumidity(el.checked);
 window.toggleTemperature = (el) => toggleTemperature(el.checked);
+window.toggleBattery = (el) => toggleBattery(el.checked);
 window.downloadCurrentTimeframeCsv = downloadCurrentTimeframeCsv;

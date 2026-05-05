@@ -213,6 +213,7 @@ def store_sensor_entry(payload: dict) -> dict:
         "hour": now.hour,
         "humidity": payload.get("humidity"),
         "temperature": payload.get("temperature"),
+        "battery": payload.get("battery"),
         "moisture": payload.get("moisture"),
         "ph": payload.get("ph"),
         "light": payload.get("light"),
