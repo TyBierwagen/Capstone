@@ -1,7 +1,10 @@
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
+#include <time.h>
+#include <esp_sleep.h>
 
 // Wi-Fi credentials
 const char* ssid = "SSID_NAME";
@@ -14,18 +17,61 @@ const char* functionKey = "YOUR_FUNCTION_KEY_HERE";
 // DHT11 on pin 15
 #define DHT_PIN 15
 #define DHT_TYPE DHT11
+
+// Use ADC1 pin for battery sensing (ADC2 pins are unreliable while WiFi is active)
+#define BATTERY_PIN 34
+const float ADC_REF_VOLTAGE = 3.3f;
+// Divider: Rtop = 10k, Rbot = 10k (1:1). Vout = Vin * (Rbot/(Rtop+Rbot)) = Vin * 0.5
+// Code-side multiplier to recover Vin from measured Vout = (Rtop + Rbot) / Rbot = 2.0
+const float BATTERY_DIVIDER_RATIO = 2.0f; // 10k/10k divider
+// Calibration factor to align computed voltage with multimeter readings.
+// Set to 1.0 initially, then adjust after measuring actual battery with a meter.
+// Example calibration: measured_reported = code_value; meter = actual_voltage;
+// BATTERY_CALIBRATION_FACTOR = meter / measured_reported
+const float BATTERY_CALIBRATION_FACTOR = 1.0f;
 const unsigned long SAMPLE_INTERVAL_MS = 60UL * 1000UL;
+
+#if defined(LED_BUILTIN)
+#define STATUS_LED_PIN LED_BUILTIN
+#else
+#define STATUS_LED_PIN -1
+#endif
+#define STATUS_LED_OFF_LEVEL LOW // Set HIGH if your board LED is active-low
+
 bool sendsleepmsg = false;
 String deviceId;
 String deviceIp;
 unsigned long lastSampleTime = 0;
 DHT dht(DHT_PIN, DHT_TYPE);
 
+void turnStatusLedOff() {
+  if (STATUS_LED_PIN >= 0) {
+    pinMode(STATUS_LED_PIN, OUTPUT);
+    digitalWrite(STATUS_LED_PIN, STATUS_LED_OFF_LEVEL);
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   delay(500);
+  turnStatusLedOff();
   dht.begin();
+  analogReadResolution(12); // ESP32 ADC: 0-4095
+  analogSetPinAttenuation(BATTERY_PIN, ADC_11db);
   connectToWiFi();
+  // Sync device clock with NTP so we can send proper timestamps
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  Serial.print("Synchronizing time with NTP");
+  unsigned long t_start = millis();
+  while (time(nullptr) < 1600000000 && millis() - t_start < 10000) {
+    delay(500);
+    Serial.print('.');
+  }
+  if (time(nullptr) >= 1600000000) {
+    Serial.println("\nTime synchronized");
+  } else {
+    Serial.println("\nNTP sync failed - device time unavailable");
+  }
   deviceId = WiFi.macAddress();
   deviceIp = WiFi.localIP().toString();
   Serial.println("=== ESP32 DHT11 Sensor ===");
@@ -48,7 +94,18 @@ void loop() {
     sendsleepmsg= true;
   }
   if (sendsleepmsg) {
-    Serial.println("Sleeping until next sample");
+    // Calculate sleep duration until next sample
+    unsigned long sleepDuration = SAMPLE_INTERVAL_MS;
+    Serial.print("Entering deep sleep for ");
+    Serial.print(sleepDuration / 1000);
+    Serial.println(" seconds");
+    turnStatusLedOff();
+    Serial.flush(); // Ensure serial output is sent before sleep
+
+    // Enable timer wakeup (convert milliseconds to microseconds)
+    esp_sleep_enable_timer_wakeup(sleepDuration * 1000);
+    // Enter deep sleep
+    esp_deep_sleep_start();
   }
   
   delay(250);
@@ -81,6 +138,13 @@ void readAndSend() {
     Serial.println("Failed to read from DHT sensor");
     return;
   }
+
+  // Read battery voltage from ADC1 pin
+  // ESP32 ADC range: 0-4095 maps to 0-3.3V (with 1/2 voltage divider for battery measurement)
+  int batteryRaw = analogRead(BATTERY_PIN);
+  float batteryPinVoltage = (batteryRaw / 4095.0f) * ADC_REF_VOLTAGE;
+  float batteryVoltage = batteryPinVoltage * BATTERY_DIVIDER_RATIO * BATTERY_CALIBRATION_FACTOR;
+
   Serial.println("\nCaptured reading:");
   Serial.print("  Temperature: ");
   Serial.print(temperature);
@@ -88,36 +152,51 @@ void readAndSend() {
   Serial.print("  Humidity: ");
   Serial.print(humidity);
   Serial.println(" %");
-  sendToApi(temperature, humidity);
+  Serial.print("  Battery Voltage: ");
+  Serial.print(batteryVoltage);
+  Serial.println(" V");
+  Serial.print("  Battery ADC Raw: ");
+  Serial.println(batteryRaw);
+  if (batteryRaw >= 4090) {
+    Serial.println("  WARNING: Battery ADC is saturated. Check divider ratio/wiring.");
+  }
+  sendToApi(temperature, humidity, batteryVoltage);
 }
 
-void sendToApi(float temperature, float humidity) {
+void sendToApi(float temperature, float humidity, float batteryVoltage) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("Wi-Fi lost before upload");
     return;
   }
+
+  WiFiClientSecure client;
+  client.setInsecure(); // Required for HTTPS on ESP32 without root CA certificate
+
   HTTPClient http;
-  http.begin(sensorApiUrl);
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("x-functions-key", functionKey);
-  StaticJsonDocument<256> payload;
-  payload["deviceId"] = deviceId;
-  payload["deviceIp"] = deviceIp;
-  payload["temperature"] = temperature;
-  payload["humidity"] = humidity;
-  payload["timestamp"] = millis();
-  String body;
-  serializeJson(payload, body);
-  Serial.print("Uploading payload: ");
-  Serial.println(body);
-  int response = http.POST(body);
-  if (response > 0) {
-    Serial.print("Upload HTTP status: ");
-    Serial.println(response);
+  if (http.begin(client, sensorApiUrl)) {
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("x-functions-key", functionKey);
+    StaticJsonDocument<256> payload;
+    payload["deviceId"] = deviceId;
+    payload["deviceIp"] = deviceIp;
+    payload["temperature"] = temperature;
+    payload["humidity"] = humidity;
+    payload["battery"] = batteryVoltage;
+    payload["timestamp"] = millis();
+    String body;
+    serializeJson(payload, body);
+    Serial.print("Uploading payload: ");
+    Serial.println(body);
+    int response = http.POST(body);
+    if (response > 0) {
+      Serial.print("Upload HTTP status: ");
+      Serial.println(response);
+    } else {
+      Serial.print("Upload failed: ");
+      Serial.println(http.errorToString(response));
+    }
+    http.end();
   } else {
-    Serial.print("Upload failed: ");
-    Serial.println(http.errorToString(response));
+    Serial.println("HttpClient begin failed");
   }
-  http.end();
-  Serial.println("HTTP connection closed");
 }
