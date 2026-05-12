@@ -214,13 +214,41 @@ export async function refreshData(showLoading = false) {
     const fetchOptions = { method: 'GET', mode: 'cors', cache: 'no-store' };
     if (apiKey) params.append('code', apiKey);
 
-    // Fetch latest telemetry plus currently selected chart range.
+    // Fetch latest telemetry first so unfiltered history requests can target a concrete device partition.
     const base = getApiBaseUrl();
-    const latestPromise = fetch(`${base.replace(/\/$/, '')}/sensor-data?${params.toString()}`, fetchOptions);
+    const latestResponse = await fetch(`${base.replace(/\/$/, '')}/sensor-data?${params.toString()}`, fetchOptions);
+    if (latestResponse.status === 401) {
+      showAlert('Unauthorized: Function key missing or invalid.', 'error');
+      addLogEntry('Unauthorized (401) from API');
+      return;
+    }
+    if (latestResponse.status === 403) {
+      showAlert('Forbidden: Access denied. Check CORS or API Gateway settings.', 'error');
+      addLogEntry('Forbidden (403) from API - check origins');
+      return;
+    }
+    if (latestResponse.status === 404) {
+      const mode = state.deviceIp ? `device ${state.deviceIp}` : 'any device';
+      showAlert(`No data found for ${mode}`, 'warning');
+      addLogEntry('Waiting for incoming data...');
+      return;
+    }
+    if (!latestResponse.ok) throw new Error('Failed to load latest data');
+
+    const latestData = await latestResponse.json();
+    updateSensorDisplay(latestData);
+    updateDeviceInfo(latestData);
+    if (shouldShowLive) setLoading('liveSensorsCard', false);
+
+    const effectiveDeviceIp = state.deviceIp || latestData?.deviceIp || state.latestData?.deviceIp;
+    const historyParams = new URLSearchParams();
+    if (effectiveDeviceIp) historyParams.append('deviceIp', effectiveDeviceIp);
+    if (apiKey) historyParams.append('code', apiKey);
+
     let selectedHistoryPromise;
     let historyFetchError = null;
     if (inCustomMode && state.customDateRange) {
-      const customParams = new URLSearchParams(params);
+      const customParams = new URLSearchParams(historyParams);
       customParams.append('history', 'true');
       customParams.append('timescale', 'all');
       customParams.append('raw', 'true');
@@ -237,37 +265,12 @@ export async function refreshData(showLoading = false) {
           return [];
         });
     } else {
-      selectedHistoryPromise = fetchHistoryByTimescale(baseUrl, params, fetchOptions, selectedTimescale, rawHistoryRequested)
+      selectedHistoryPromise = fetchHistoryByTimescale(baseUrl, historyParams, fetchOptions, selectedTimescale, rawHistoryRequested)
         .catch((error) => {
           historyFetchError = error;
           return [];
         });
     }
-
-    const latestResponse = await latestPromise;
-
-    if (latestResponse.status === 401) { 
-      showAlert('Unauthorized: Function key missing or invalid.', 'error'); 
-      addLogEntry('Unauthorized (401) from API'); 
-      return; 
-    }
-    if (latestResponse.status === 403) { 
-      showAlert('Forbidden: Access denied. Check CORS or API Gateway settings.', 'error'); 
-      addLogEntry('Forbidden (403) from API - check origins'); 
-      return; 
-    }
-    if (latestResponse.status === 404) { 
-      const mode = state.deviceIp ? `device ${state.deviceIp}` : 'any device'; 
-      showAlert(`No data found for ${mode}`, 'warning'); 
-      addLogEntry('Waiting for incoming data...'); 
-      return; 
-    }
-    if (!latestResponse.ok) throw new Error('Failed to load latest data');
-
-    const latestData = await latestResponse.json();
-    updateSensorDisplay(latestData);
-    updateDeviceInfo(latestData);
-    if (shouldShowLive) setLoading('liveSensorsCard', false);
     
     let chartData = [];
     let chartTimescale = selectedTimescale;
@@ -285,7 +288,7 @@ export async function refreshData(showLoading = false) {
     updateChart(chartData, chartTimescale);
 
     // Warm remaining ranges in background so all timeframe switches work offline.
-    ensureAllTimescalesCached(baseUrl, params, fetchOptions, selectedTimescale, rawHistoryRequested);
+    ensureAllTimescalesCached(baseUrl, historyParams, fetchOptions, selectedTimescale, rawHistoryRequested);
     const displayTimescale = inCustomMode ? 'custom range' : timescale;
     const scaleLabel = document.querySelector(`#timeScale option[value="${document.getElementById('timeScale')?.value || '1h'}"]`)?.textContent || displayTimescale;
     addLogEntry(`Synced data for ${scaleLabel}`);

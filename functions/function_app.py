@@ -732,6 +732,18 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
     if not client:
         return []
 
+    # When no device filter is provided, pin history reads to the latest active device
+    # so table queries remain partition-targeted instead of cross-partition scans.
+    if not device_ip:
+        try:
+            latest = fetch_latest_sensor_entry()
+            resolved_ip = latest.get("deviceIp") if latest else None
+            if resolved_ip:
+                device_ip = str(resolved_ip)
+                logging.debug("Resolved history device_ip to latest active device: %s", device_ip)
+        except Exception as ex:
+            logging.debug("Unable to resolve default history device_ip: %s", ex)
+
     filters = []
     if device_ip:
         filters.append(f"PartitionKey eq '{device_ip.replace('.', '_')}'")
