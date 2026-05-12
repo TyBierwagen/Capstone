@@ -1,5 +1,3 @@
-import './robot.js';
-import { setupOverrideControls } from './override.js';
 import { state } from './state.js';
 import { showAlert, addLogEntry, clearLog } from './ui.js';
 import { initChart, toggleHumidity, toggleTemperature, toggleBattery, updateChart, rebalanceAssignedSides, normalizeAxes, downloadCurrentTimeframeCsv } from './chart.js';
@@ -19,11 +17,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const savedUseProd = localStorage.getItem('useProd'); if (savedUseProd !== null) state.useProd = savedUseProd === 'true'; const apiToggle = document.getElementById('apiSourceToggle'); if (apiToggle) apiToggle.checked = state.useProd;
 
+  // Restore custom API URL if present
+  const savedCustomApi = localStorage.getItem('customApiUrl');
+  if (savedCustomApi) {
+    const el = document.getElementById('customApiUrl');
+    if (el) el.value = savedCustomApi;
+  }
+
   // Chart init
   initChart();
 
   // Restore chart visibility
   const showHumiditySaved = localStorage.getItem('showHumidity'); const showTempSaved = localStorage.getItem('showTemperature'); const showBatterySaved = localStorage.getItem('showBattery'); const humidityCheckbox = document.getElementById('showHumidity'); const tempCheckbox = document.getElementById('showTemperature'); const batteryCheckbox = document.getElementById('showBattery'); if (humidityCheckbox) humidityCheckbox.checked = (showHumiditySaved !== 'false'); if (tempCheckbox) tempCheckbox.checked = (showTempSaved !== 'false'); if (batteryCheckbox) batteryCheckbox.checked = (showBatterySaved !== 'false');
+  // restore moving average selector value (0 = off)
+  const savedMAWindow = localStorage.getItem('movingAvgWindow');
+  const maSelect = document.getElementById('movingAvgSelect');
+  if (maSelect) {
+    const val = savedMAWindow !== null ? savedMAWindow : String(typeof state.movingAvgWindow === 'number' ? state.movingAvgWindow : '0');
+    maSelect.value = String(val);
+    state.movingAvgWindow = Number(val) || 0;
+  }
   if (state.chart) { state.visibleOrder = []; if (humidityCheckbox && humidityCheckbox.checked) state.visibleOrder.push(0); if (tempCheckbox && tempCheckbox.checked) state.visibleOrder.push(1); if (batteryCheckbox && batteryCheckbox.checked) state.visibleOrder.push(2); state.chart.data.datasets.forEach((d, i) => { d.hidden = !state.visibleOrder.includes(i); if (i === 1) { const unitLabel = state.tempUnit === 'F' ? '°F' : '°C'; d.axisTitle = `Temp (${unitLabel})`; } if (i === 2) { d.axisTitle = 'Battery (V)'; } });
     rebalanceAssignedSides();
     normalizeAxes();
@@ -123,9 +136,17 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('showHumidity')?.addEventListener('change', (e) => toggleHumidity(e.target.checked));
   document.getElementById('showTemperature')?.addEventListener('change', (e) => toggleTemperature(e.target.checked));
   document.getElementById('showBattery')?.addEventListener('change', (e) => toggleBattery(e.target.checked));
+  document.getElementById('movingAvgSelect')?.addEventListener('change', (e) => {
+    const v = Number(e.target.value) || 0;
+    state.movingAvgWindow = v;
+    localStorage.setItem('movingAvgWindow', String(v));
+    if (state.historyData) updateChart(state.historyData, state.lastTimescale || '1h');
+    addLogEntry(v > 1 ? `Applied moving average window ${v}` : 'Disabled moving average');
+  });
 
   document.getElementById('deviceIp')?.addEventListener('input', updateActiveIp);
   document.getElementById('functionKey')?.addEventListener('input', updateActiveKey);
+  document.getElementById('customApiUrl')?.addEventListener('change', (e) => { localStorage.setItem('customApiUrl', (e.target.value || '').trim()); addLogEntry('Saved custom API URL'); });
 
   // Initialize override and robot modules
   if (window.override && typeof window.override.setupOverrideControls === 'function') window.override.setupOverrideControls();

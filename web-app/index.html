@@ -470,6 +470,11 @@
             <span style="font-size: 11px; color: #94a3b8;">Prod</span>
           </div>
         </div>
+        <div class="form-row">
+          <label for="customApiUrl">Custom API Base URL (optional)</label>
+          <input type="text" id="customApiUrl" placeholder="e.g. http://localhost:5500 or http://localhost:5500/api" />
+          <div style="font-size:11px; color:#94a3b8; margin-top:6px;">Set if your API is hosted on a non-default port or path.</div>
+        </div>
 
         <div class="form-row" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; background: rgba(255,255,255,0.05); padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
           <div style="display: flex; flex-direction: column; gap: 2px;">
@@ -582,6 +587,16 @@
               <option value="custom">Custom Range</option>
             </select>
             <button id="downloadTimeframeBtn" class="plain" style="width:auto; padding:8px 12px; font-size:13px;">Download CSV</button>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label for="movingAvgSelect" style="font-size:13px; color:#94a3b8; margin:0;">Moving Avg:</label>
+            <select id="movingAvgSelect" style="padding:6px 8px; border-radius:6px; background: rgba(15, 23, 42, 0.6); color: white; border: 1px solid rgba(255,255,255,0.06); font-size:13px;">
+              <option value="0">Off</option>
+              <option value="3">Window 3</option>
+              <option value="5" selected>Window 5</option>
+              <option value="10">Window 10</option>
+              <option value="20">Window 20</option>
+            </select>
           </div>
         </div>
         <div id="customTimeRangeContainer" style="display: none; margin-bottom: 12px; padding: 12px; background: rgba(99, 102, 241, 0.1); border-radius: 10px; border: 1px solid rgba(99, 102, 241, 0.3);">

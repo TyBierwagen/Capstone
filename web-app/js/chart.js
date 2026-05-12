@@ -35,6 +35,28 @@ function csvEscape(value) {
   return str;
 }
 
+function computeMovingAverage(points, windowSize) {
+  if (!Array.isArray(points) || points.length === 0) return [];
+  const w = Math.max(1, Number(windowSize) || 1);
+  const out = [];
+  const vals = [];
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    const y = (p && typeof p.y === 'number' && !Number.isNaN(p.y)) ? p.y : null;
+    vals.push(y);
+    // compute average of up to `w` most recent numeric values ending at i
+    let sum = 0; let count = 0;
+    for (let j = i; j >= 0 && count < w; j--) {
+      const v = vals[j];
+      if (v === null || v === undefined || Number.isNaN(Number(v))) continue;
+      sum += Number(v); count++;
+    }
+    const avg = count > 0 ? (sum / count) : null;
+    out.push({ x: p.x, y: avg });
+  }
+  return out;
+}
+
 function ensureDatasetAxisMeta() {
   if (!state.chart?.data?.datasets) return;
   const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
@@ -284,6 +306,35 @@ export function updateChart(history, timescale = '1h') {
     state.chart.data.datasets[2].data = pointsBattery;
   }
 
+  // Respect persisted visibility toggles: if user asked to show battery/temp/humidity,
+  // ensure those datasets remain visible even if points are null for aggregated ranges.
+  try {
+    const showHum = localStorage.getItem('showHumidity');
+    const showTemp = localStorage.getItem('showTemperature');
+    const showBatt = localStorage.getItem('showBattery');
+    if (typeof showHum === 'string') state.chart.data.datasets[0].hidden = !(showHum === 'true');
+    if (typeof showTemp === 'string') state.chart.data.datasets[1].hidden = !(showTemp === 'true');
+    if (typeof showBatt === 'string' && state.chart.data.datasets[2]) state.chart.data.datasets[2].hidden = !(showBatt === 'true');
+  } catch (e) { /* ignore localStorage errors */ }
+  // If moving average is enabled (window > 1), replace each metric's points with its SMA
+  try {
+    const w = Number(state.movingAvgWindow) || 0;
+    if (w > 1) {
+      const maHum = computeMovingAverage(pointsHum, w);
+      const maTemp = computeMovingAverage(pointsTemp, w);
+      const maBattery = computeMovingAverage(pointsBattery, w);
+      state.chart.data.datasets[0].data = maHum;
+      state.chart.data.datasets[1].data = maTemp;
+      if (state.chart.data.datasets[2]) state.chart.data.datasets[2].data = maBattery;
+      // update labels to indicate MA
+      state.chart.data.datasets[0].label = `Humidity MA (${w})`;
+      state.chart.data.datasets[1].label = `Temp MA (${w})`;
+      if (state.chart.data.datasets[2]) state.chart.data.datasets[2].label = `Battery MA (${w})`;
+    }
+  } catch (e) {
+    console.debug('apply moving average failed', e);
+  }
+
   // Hide overlay if we have any valid points
   const humValid = pointsHum.some(p => p.y !== null && !Number.isNaN(p.y));
   const tempValid = pointsTemp.some(p => p.y !== null && !Number.isNaN(p.y));
@@ -473,9 +524,11 @@ export function downloadCurrentTimeframeCsv() {
 export function toggleHumidity(checked) { setAxisDisplayByDatasetIndex(0, checked); localStorage.setItem('showHumidity', checked); addLogEntry(`${checked ? 'Showing' : 'Hiding'} humidity on chart`); }
 export function toggleTemperature(checked) { setAxisDisplayByDatasetIndex(1, checked); localStorage.setItem('showTemperature', checked); addLogEntry(`${checked ? 'Showing' : 'Hiding'} temperature on chart`); }
 export function toggleBattery(checked) { setAxisDisplayByDatasetIndex(2, checked); localStorage.setItem('showBattery', checked); addLogEntry(`${checked ? 'Showing' : 'Hiding'} battery on chart`); }
+// moving-average is controlled via `state.movingAvgWindow` (0 = off, >1 = window size)
 
 // Expose for legacy calls
-window.initChart = initChart; window.updateChart = updateChart;
+window.initChart = initChart;
+window.updateChart = updateChart;
 window.toggleHumidity = (el) => toggleHumidity(el.checked);
 window.toggleTemperature = (el) => toggleTemperature(el.checked);
 window.toggleBattery = (el) => toggleBattery(el.checked);

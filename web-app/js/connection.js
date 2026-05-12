@@ -21,17 +21,69 @@ function setChartLoadingOverlay(visible) {
   loader.style.display = visible ? 'flex' : 'none';
 }
 
-export function getApiBaseUrl() { return state.useProd ? PROD_API_URL : LOCAL_API_URL; }
+// Always use production API endpoint
+export function getApiBaseUrl() { return PROD_API_URL; }
 
 async function fetchHistoryByTimescale(baseUrl, params, fetchOptions, timescale) {
   const historyParams = new URLSearchParams(params);
   historyParams.append('history', 'true');
   historyParams.append('timescale', timescale);
-  const response = await fetch(`${baseUrl}/sensor-data?${historyParams.toString()}`, fetchOptions);
+  const base = getApiBaseUrl();
+  const response = await fetch(`${base.replace(/\/$/, '')}/sensor-data?${historyParams.toString()}`, fetchOptions);
   if (!response.ok) throw new Error(`History fetch failed for ${timescale}`);
   const body = await response.json();
   const rows = Array.isArray(body?.history) ? body.history : [];
+  try {
+    const humCount = rows.filter(r => r && r.humidity !== null && r.humidity !== undefined).length;
+    const tempCount = rows.filter(r => r && r.temperature !== null && r.temperature !== undefined && r.temperature !== '').length;
+    const battCount = rows.filter(r => r && r.battery !== null && r.battery !== undefined && r.battery !== '').length;
+    console.debug(`Fetched ${rows.length} rows for timescale=${timescale} (hum:${humCount}, temp:${tempCount}, batt:${battCount})`, rows.slice(0,5));
+    addLogEntry(`Fetched ${rows.length} rows for ${timescale} (hum:${humCount}, temp:${tempCount}, batt:${battCount})`);
+    if (battCount === 0) addLogEntry('Warning: No battery values returned for this timescale');
+  } catch (e) { console.debug('history diagnostics failed', e); }
   state.historyCache[timescale] = rows;
+  // If battery values are missing for aggregated timescales, attempt a raw-range fallback
+  try {
+    const battCount = rows.filter(r => r && r.battery !== null && r.battery !== undefined && r.battery !== '').length;
+    const aggregatedTimes = ['1d','1m','1y','all'];
+    if (battCount === 0 && aggregatedTimes.includes(timescale) && rows.length > 0) {
+      try {
+        addLogEntry(`No battery in aggregated ${timescale} — fetching raw range fallback`);
+        // Compute approximate start for the timescale
+        const now = new Date();
+        let start = new Date(now);
+        if (timescale === '1d') start.setDate(now.getDate() - 1);
+        else if (timescale === '1m') start.setMonth(now.getMonth() - 1);
+        else if (timescale === '1y') start.setFullYear(now.getFullYear() - 1);
+        else if (timescale === 'all') start = new Date(0);
+
+        const rawParams = new URLSearchParams(params);
+        rawParams.append('history','true');
+        rawParams.append('timescale','all');
+        rawParams.append('raw','true');
+        rawParams.append('start', start.toISOString());
+        rawParams.append('end', now.toISOString());
+
+        const base = getApiBaseUrl();
+        const resp = await fetch(`${base.replace(/\/$/, '')}/sensor-data?${rawParams.toString()}`, fetchOptions);
+        if (resp.ok) {
+          const rawBody = await resp.json();
+          const rawRows = Array.isArray(rawBody?.history) ? rawBody.history : [];
+          const rawBatt = rawRows.filter(r => r && r.battery !== null && r.battery !== undefined && r.battery !== '').length;
+          console.debug(`Raw fallback returned ${rawRows.length} rows (batt:${rawBatt})`);
+          if (rawRows.length > 0 && rawBatt > 0) {
+            state.historyCache[timescale] = rawRows;
+            return rawRows;
+          }
+        } else {
+          console.debug('Raw fallback fetch failed', resp.status);
+        }
+      } catch (fbErr) {
+        console.debug('raw fallback error', fbErr);
+      }
+    }
+  } catch (e) { console.debug('post-fetch fallback check failed', e); }
+
   return rows;
 }
 
@@ -76,7 +128,8 @@ export async function fetchCustomDateRange(startDate, endDate) {
     params.append('start', startDate.toISOString()); // ISO format with Z
     params.append('end', endDate.toISOString());
     
-    const response = await fetch(`${baseUrl}/sensor-data?${params.toString()}`, fetchOptions);
+    const base = getApiBaseUrl();
+    const response = await fetch(`${base.replace(/\/$/, '')}/sensor-data?${params.toString()}`, fetchOptions);
     if (!response.ok) throw new Error(`Fetch failed with status ${response.status}`);
     
     const body = await response.json();
@@ -150,7 +203,8 @@ export async function refreshData(showLoading = false) {
     if (apiKey) params.append('code', apiKey);
 
     // Fetch latest telemetry plus currently selected chart range.
-    const latestPromise = fetch(`${baseUrl}/sensor-data?${params.toString()}`, fetchOptions);
+    const base = getApiBaseUrl();
+    const latestPromise = fetch(`${base.replace(/\/$/, '')}/sensor-data?${params.toString()}`, fetchOptions);
     let selectedHistoryPromise;
     let historyFetchError = null;
     if (inCustomMode && state.customDateRange) {
@@ -160,7 +214,7 @@ export async function refreshData(showLoading = false) {
       customParams.append('raw', 'true');
       customParams.append('start', state.customDateRange.start.toISOString());
       customParams.append('end', state.customDateRange.end.toISOString());
-      selectedHistoryPromise = fetch(`${baseUrl}/sensor-data?${customParams.toString()}`, fetchOptions)
+      selectedHistoryPromise = fetch(`${base.replace(/\/$/, '')}/sensor-data?${customParams.toString()}`, fetchOptions)
         .then(async (res) => {
           if (!res.ok) throw new Error(`History fetch failed for custom range (${res.status})`);
           const body = await res.json();
@@ -241,9 +295,11 @@ export async function checkApiHealth() {
   const statusEl = document.getElementById('healthStatus');
 
   try {
-    const response = await fetch(`${baseUrl}/health`, { method: 'GET', mode: 'cors', cache: 'no-store' });
+    const url = `${baseUrl.replace(/\/$/, '')}/health`;
+    console.debug('Checking API health at', url);
+    const response = await fetch(url, { method: 'GET', mode: 'cors', cache: 'no-store' });
     const text = await response.text();
-    const message = `API health: ${response.status} ${response.statusText} (${text || 'no body'})`;
+    const message = `API health: ${response.status} ${response.statusText} (${text || 'no body'}) -- ${baseUrl}`;
 
     if (statusEl) statusEl.textContent = message;
     if (response.ok) {

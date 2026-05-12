@@ -11,6 +11,7 @@ export const state = {
   lastTimescale: '1h',
   refreshInProgress: false,
   visibleOrder: [],
+  movingAvgWindow: 0,
   robot: { x: 0, y: 0, angle: 0, trail: [{ x: 0, y: 0 }] },
   robotTrailLimit: 200,
   customDateRange: null
