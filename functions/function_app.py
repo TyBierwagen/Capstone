@@ -179,7 +179,7 @@ def update_rollups(entry: dict) -> None:
         update_rollup_entry(entry, granularity)
 
 def now_iso() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat() + "Z"
+    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def format_timedelta(seconds: float) -> str:
@@ -339,7 +339,7 @@ def store_sensor_entry(payload: dict) -> dict:
         now = ts_dt
     else:
         now = datetime.datetime.now(datetime.timezone.utc)
-        timestamp = now.replace(microsecond=0).isoformat() + "Z"
+        timestamp = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     device_ip = payload.get("deviceIp", "unknown")
     
@@ -481,9 +481,108 @@ def parse_timestamp(value) -> Optional[datetime.datetime]:
     if not value:
         return None
     try:
-        return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        normalized = str(value)
+        if normalized.endswith("+00:00Z"):
+            normalized = normalized.replace("+00:00Z", "Z")
+        return datetime.datetime.fromisoformat(normalized.replace("Z", "+00:00"))
     except Exception:
         return None
+
+
+def rebuild_rollups_for_window(window_hours: int = 48, max_rows: int = 50000) -> dict:
+    """Rebuild recent rollup buckets from raw SensorData in an idempotent way."""
+    source_client = get_table_client("SensorData")
+    rollup_client = get_rollup_table_client()
+    if not source_client or not rollup_client:
+        return {"processedRows": 0, "writtenRollups": 0, "error": "storage unavailable"}
+
+    since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=window_hours)
+    query = f"RowKey ge '{int(since.timestamp()):010d}_0'"
+
+    try:
+        entities = list(source_client.query_entities(
+            query_filter=query,
+            select=["PartitionKey", "RowKey", "timestamp", "deviceIp", "humidity", "temperature", "battery", "moisture", "ph", "light", "Timestamp"],
+        ))
+    except Exception as ex:
+        logging.error("Rollup reconcile query failed: %s", ex)
+        return {"processedRows": 0, "writtenRollups": 0, "error": str(ex)}
+
+    if max_rows and len(entities) > max_rows:
+        entities = entities[-max_rows:]
+
+    buckets: Dict[tuple[str, str, str], Dict[str, Any]] = {}
+
+    for entity in entities:
+        row = dict(entity)
+        ts = parse_timestamp(row.get("timestamp") or row.get("Timestamp"))
+        if not ts:
+            continue
+
+        device_ip = row.get("deviceIp") or str(row.get("PartitionKey", "unknown")).replace("_", ".")
+
+        for granularity in ("hour", "day", "month"):
+            bucket_start = floor_to_bucket(ts, granularity)
+            bucket_key = (device_ip, granularity, rollup_row_key(bucket_start))
+            bucket = buckets.get(bucket_key)
+            if not bucket:
+                bucket = {
+                    "deviceIp": device_ip,
+                    "granularity": granularity,
+                    "bucket_start": bucket_start,
+                    "count": 0,
+                    "sums": {"humidity": 0.0, "temperature": 0.0, "battery": 0.0, "moisture": 0.0, "ph": 0.0, "light": 0.0},
+                    "numericCounts": {"humidity": 0, "temperature": 0, "battery": 0, "moisture": 0, "ph": 0, "light": 0},
+                }
+                buckets[bucket_key] = bucket
+
+            bucket["count"] += 1
+            for field in ("humidity", "temperature", "battery", "moisture", "ph", "light"):
+                value = row.get(field)
+                if value is None:
+                    continue
+                try:
+                    numeric = float(value)
+                except Exception:
+                    continue
+                bucket["sums"][field] += numeric
+                bucket["numericCounts"][field] += 1
+
+    written = 0
+    for bucket in buckets.values():
+        bucket_start = bucket["bucket_start"]
+        sums = bucket["sums"]
+        numeric_counts = bucket["numericCounts"]
+
+        def bucket_avg(field: str) -> Optional[float]:
+            cnt = numeric_counts.get(field, 0)
+            if not cnt:
+                return None
+            return round(sums.get(field, 0.0) / cnt, 2)
+
+        entity = {
+            "PartitionKey": rollup_bucket_key(bucket["deviceIp"], bucket["granularity"]),
+            "RowKey": rollup_row_key(bucket_start),
+            "deviceIp": bucket["deviceIp"],
+            "granularity": bucket["granularity"],
+            "timestamp": rollup_row_key(bucket_start),
+            "count": bucket["count"],
+            "humidity": bucket_avg("humidity"),
+            "temperature": bucket_avg("temperature"),
+            "battery": bucket_avg("battery"),
+            "moisture": bucket_avg("moisture"),
+            "ph": bucket_avg("ph"),
+            "light": bucket_avg("light"),
+            "lastUpdated": now_iso(),
+        }
+
+        try:
+            rollup_client.upsert_entity(mode=UpdateMode.REPLACE, entity=entity)
+            written += 1
+        except Exception as ex:
+            logging.warning("Rollup reconcile upsert failed for %s/%s: %s", entity.get("PartitionKey"), entity.get("RowKey"), ex)
+
+    return {"processedRows": len(entities), "writtenRollups": written}
 
 
 def fetch_rollup_history(device_ip: Optional[str], timescale: str, start_timestamp: Optional[str], end_timestamp: Optional[str], limit: Optional[int]) -> list:
@@ -869,6 +968,37 @@ def get_control_command(req: func.HttpRequest) -> func.HttpResponse:
 
     payload = command_entry or {"deviceIp": device_ip, "command": None, "status": "idle"}
     return json_response(payload)
+
+
+@app.function_name("rollupReconcileTimer")
+@app.schedule(schedule="0 */15 * * * *", arg_name="timer", run_on_startup=False, use_monitor=True)
+def rollup_reconcile_timer(timer: func.TimerRequest) -> None:
+    enabled = str(os.getenv("ENABLE_ROLLUP_RECONCILE", "true")).strip().lower() in ("1", "true", "yes")
+    if not enabled:
+        logging.info("Rollup reconcile timer is disabled via ENABLE_ROLLUP_RECONCILE")
+        return
+
+    try:
+        window_hours = int(os.getenv("ROLLUP_RECONCILE_WINDOW_HOURS", "48"))
+    except Exception:
+        window_hours = 48
+
+    try:
+        max_rows = int(os.getenv("ROLLUP_RECONCILE_MAX_ROWS", "50000"))
+    except Exception:
+        max_rows = 50000
+
+    start = datetime.datetime.now(datetime.timezone.utc)
+    result = rebuild_rollups_for_window(window_hours=window_hours, max_rows=max_rows)
+    elapsed = (datetime.datetime.now(datetime.timezone.utc) - start).total_seconds()
+    logging.info(
+        "Rollup reconcile completed in %ss (window_hours=%s, processedRows=%s, writtenRollups=%s, error=%s)",
+        round(elapsed, 2),
+        window_hours,
+        result.get("processedRows"),
+        result.get("writtenRollups"),
+        result.get("error"),
+    )
 
 
 @app.function_name("healthCheck")

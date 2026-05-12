@@ -1,4 +1,4 @@
-# save as functions/check_rollups.py and run: python functions/check_rollups.py
+# Run from repo root: python scripts/check_rollups.py
 import os
 import json
 from pathlib import Path
@@ -6,7 +6,10 @@ from collections import Counter
 from azure.data.tables import TableServiceClient
 
 def load_local_settings():
-    settings_path = Path(__file__).resolve().parent / "local.settings.json"
+    script_dir = Path(__file__).resolve().parent
+    settings_path = script_dir / "local.settings.json"
+    if not settings_path.exists():
+        settings_path = script_dir.parent / "functions" / "local.settings.json"
     if not settings_path.exists():
         return
     try:

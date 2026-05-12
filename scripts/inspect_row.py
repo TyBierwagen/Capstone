@@ -4,7 +4,10 @@ from pathlib import Path
 from azure.data.tables import TableServiceClient
 
 # load local.settings.json if present
-settings_path = Path(__file__).resolve().parent / "local.settings.json"
+script_dir = Path(__file__).resolve().parent
+settings_path = script_dir / "local.settings.json"
+if not settings_path.exists():
+    settings_path = script_dir.parent / "functions" / "local.settings.json"
 if settings_path.exists():
     try:
         payload = json.loads(settings_path.read_text(encoding="utf-8"))

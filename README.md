@@ -150,15 +150,13 @@ The local backend is configured to use Azure Storage only. Set both `AzureWebJob
 If you already have raw `SensorData` rows and want 1m/1y to load fast, run the one-time rollup backfill first:
 
 ```bash
-cd functions
-python backfill_rollups.py
+python scripts/backfill_rollups.py
 ```
 
 Recommended safe mode (no table delete):
 
 ```bash
-cd functions
-python backfill_rollups.py --keep-existing
+python scripts/backfill_rollups.py --keep-existing
 ```
 
 ### Rollup Troubleshooting (1m slow, 1y fast)
@@ -168,18 +166,35 @@ If `timescale=1m` is still slow while `timescale=1y` is fast, the API is usually
 1. Check rollup coverage:
 
 ```bash
-cd functions
-python check_rollups.py
+python scripts/check_rollups.py
 ```
 
 2. If a specific device partition has raw rows but no rollups, backfill that partition directly:
 
 ```bash
-cd functions
-python backfill_device.py 192_168_1_33
+python scripts/backfill_device.py 192_168_1_33
 ```
 
 Use the device partition format from Table Storage (`192_168_1_33`) rather than dotted IP format.
+
+### Production Rollup Automation
+
+Rollups are now maintained in two ways:
+
+1. **On ingest**: each `POST /sensor-data` write updates rollups immediately.
+2. **Scheduled reconcile**: a timer-triggered Function (`rollupReconcileTimer`) runs every 15 minutes and rebuilds recent rollup buckets from raw `SensorData` rows. This keeps rollups correct for late-arriving data and self-heals missed writes.
+
+Set these app settings on the Function App in Azure:
+
+- `ENABLE_ROLLUP_RECONCILE=true`
+- `ROLLUP_RECONCILE_WINDOW_HOURS=48`
+- `ROLLUP_RECONCILE_MAX_ROWS=50000`
+
+Notes:
+
+- Increase `ROLLUP_RECONCILE_WINDOW_HOURS` if your devices often upload older delayed samples.
+- If your table is very large, reduce `ROLLUP_RECONCILE_MAX_ROWS` to bound execution time and cost.
+- Keep your one-time `backfill_rollups.py --keep-existing` run for historic data; the timer keeps new data up-to-date afterward.
 
 Stop the Function host before running the backfill, then restart it after the script completes.
 

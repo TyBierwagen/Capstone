@@ -18,7 +18,10 @@ NUMERIC_FIELDS = ("humidity", "temperature", "battery", "moisture", "ph", "light
 
 
 def load_local_settings() -> None:
-    settings_path = Path(__file__).resolve().parent / "local.settings.json"
+    script_dir = Path(__file__).resolve().parent
+    settings_path = script_dir / "local.settings.json"
+    if not settings_path.exists():
+        settings_path = script_dir.parent / "functions" / "local.settings.json"
     if not settings_path.exists():
         return
 
