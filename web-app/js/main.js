@@ -16,6 +16,9 @@ document.addEventListener('DOMContentLoaded', () => {
   if (savedUnit) { state.tempUnit = savedUnit; const toggle = document.getElementById('tempUnitToggle'); if (toggle) toggle.checked = savedUnit === 'F'; const tempUnitEl = document.querySelector('#temperature')?.nextElementSibling; if (tempUnitEl) tempUnitEl.textContent = savedUnit === 'F' ? '°F' : '°C'; }
 
   const savedUseProd = localStorage.getItem('useProd'); if (savedUseProd !== null) state.useProd = savedUseProd === 'true'; const apiToggle = document.getElementById('apiSourceToggle'); if (apiToggle) apiToggle.checked = state.useProd;
+  const savedRawHistory = localStorage.getItem('rawHistory');
+  const rawHistoryToggle = document.getElementById('rawHistoryToggle');
+  if (rawHistoryToggle) rawHistoryToggle.checked = savedRawHistory === 'true';
 
   // Restore custom API URL if present
   const savedCustomApi = localStorage.getItem('customApiUrl');
@@ -133,6 +136,11 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('apiSourceToggle')?.addEventListener('change', toggleApiSource);
   document.getElementById('filterIpToggle')?.addEventListener('change', toggleIpFilter);
   document.getElementById('tempUnitToggle')?.addEventListener('change', toggleTempUnit);
+  document.getElementById('rawHistoryToggle')?.addEventListener('change', (e) => {
+    const enabled = !!e.target.checked;
+    localStorage.setItem('rawHistory', String(enabled));
+    if (state.isConnected) refreshData(true);
+  });
   document.getElementById('showHumidity')?.addEventListener('change', (e) => toggleHumidity(e.target.checked));
   document.getElementById('showTemperature')?.addEventListener('change', (e) => toggleTemperature(e.target.checked));
   document.getElementById('showBattery')?.addEventListener('change', (e) => toggleBattery(e.target.checked));

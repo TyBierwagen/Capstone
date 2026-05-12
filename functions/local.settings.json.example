@@ -2,14 +2,15 @@
   "IsEncrypted": false,
   "Values": {
     "FUNCTIONS_WORKER_RUNTIME": "python",
-    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "AzureWebJobsStorage": "<Azure Storage connection string>",
+    "STORAGE_CONNECTION_STRING": "<Azure Storage connection string>",
     "ALERT_RECIPIENT": "tybierwagen@tamu.edu",
-    "ACS_SENDER_EMAIL": "DoNotReply@soilrobot.example.com",
-    "ACS_CONNECTION_STRING": "endpoint"
+    "ACS_SENDER_EMAIL": "DoNotReply@tybierwagen.com",
+    "ACS_CONNECTION_STRING": "<Azure Communication Services connection string>"
   }, 
 
   "Host": {
-    "LocalHttpPort": 5500,
+    "LocalHttpPort": 7071,
     "CORS": "*"
   }
 }

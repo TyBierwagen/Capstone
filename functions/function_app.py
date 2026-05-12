@@ -23,16 +23,160 @@ app = func.FunctionApp()
 
 # Storage Configuration
 conn_str = os.getenv("STORAGE_CONNECTION_STRING") or os.getenv("AzureWebJobsStorage")
+if not conn_str:
+    logging.error("No Azure Storage connection string configured. Set STORAGE_CONNECTION_STRING or AzureWebJobsStorage to a real Azure Storage account.")
 try:
     table_service = TableServiceClient.from_connection_string(conn_str) if conn_str else None
 except Exception as ex:
     logging.error("Failed to initialize TableServiceClient: %s", ex)
     table_service = None
 
+_ENSURED_TABLES: set[str] = set()
+
 def get_table_client(table_name: str):
     if not table_service:
         return None
+    if table_name not in _ENSURED_TABLES:
+        try:
+            table_service.create_table_if_not_exists(table_name)
+            _ENSURED_TABLES.add(table_name)
+        except Exception as ex:
+            logging.warning("Unable to ensure table %s exists: %s", table_name, ex)
     return table_service.get_table_client(table_name)
+
+
+ROLLUP_TABLE_NAME = "SensorHistoryRollups"
+ROLLUP_FIELD_MAP = {
+    "hour": "hour",
+    "day": "day",
+    "month": "month",
+}
+
+
+def get_rollup_table_client():
+    return get_table_client(ROLLUP_TABLE_NAME)
+
+
+def floor_to_bucket(dt: datetime.datetime, granularity: str) -> datetime.datetime:
+    dt = dt.replace(microsecond=0)
+    if granularity == "hour":
+        return dt.replace(minute=0, second=0)
+    if granularity == "day":
+        return dt.replace(hour=0, minute=0, second=0)
+    if granularity == "month":
+        return dt.replace(day=1, hour=0, minute=0, second=0)
+    return dt
+
+
+def rollup_bucket_key(device_ip: str, granularity: str) -> str:
+    return f"{device_ip.replace('.', '_')}|{granularity}"
+
+
+def rollup_row_key(bucket_start: datetime.datetime) -> str:
+    return bucket_start.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def rollup_partition_and_row(device_ip: str, bucket_start: datetime.datetime, granularity: str) -> tuple[str, str]:
+    return rollup_bucket_key(device_ip, granularity), rollup_row_key(bucket_start)
+
+
+def get_rollup_granularity(timescale: str) -> Optional[str]:
+    if timescale == "1d":
+        return "hour"
+    if timescale == "1m":
+        return "day"
+    if timescale in ("1y", "all"):
+        return "month"
+    return None
+
+
+def get_rollup_granularities(timescale: str) -> list:
+    """Return ordered list of rollup granularities to try for a given timescale.
+    Prefer finer-grained rollups first, then fall back to coarser ones if empty.
+    """
+    if timescale == "1d":
+        return ["hour", "day"]
+    if timescale == "1m":
+        return ["day", "month"]
+    if timescale in ("1y", "all"):
+        return ["month"]
+    return []
+
+
+def merge_numeric(current_value, new_value, current_count: int) -> tuple[Optional[float], int]:
+    try:
+        numeric = float(new_value)
+    except Exception:
+        return current_value, current_count
+
+    if current_value is None:
+        return numeric, current_count + 1
+
+    try:
+        existing = float(current_value)
+    except Exception:
+        existing = 0.0
+
+    total = existing * current_count + numeric
+    return total / (current_count + 1), current_count + 1
+
+
+def update_rollup_entry(entry: dict, granularity: str) -> None:
+    client = get_rollup_table_client()
+    if not client:
+        return
+
+    timestamp_raw = entry.get("timestamp")
+    if not timestamp_raw:
+        return
+
+    try:
+        entry_dt = datetime.datetime.fromisoformat(str(timestamp_raw).replace("Z", "+00:00"))
+    except Exception:
+        return
+
+    bucket_start = floor_to_bucket(entry_dt, granularity)
+    partition_key, row_key = rollup_partition_and_row(entry.get("deviceIp", "unknown"), bucket_start, granularity)
+
+    try:
+        existing = client.get_entity(partition_key=partition_key, row_key=row_key)
+    except Exception:
+        existing = None
+
+    counts = int(existing.get("count", 0)) if existing else 0
+    humidity, humidity_count = merge_numeric(existing.get("humidity") if existing else None, entry.get("humidity"), counts)
+    temperature, temperature_count = merge_numeric(existing.get("temperature") if existing else None, entry.get("temperature"), counts)
+    battery, battery_count = merge_numeric(existing.get("battery") if existing else None, entry.get("battery"), counts)
+    moisture, moisture_count = merge_numeric(existing.get("moisture") if existing else None, entry.get("moisture"), counts)
+    ph, ph_count = merge_numeric(existing.get("ph") if existing else None, entry.get("ph"), counts)
+    light, light_count = merge_numeric(existing.get("light") if existing else None, entry.get("light"), counts)
+
+    next_count = max(humidity_count, temperature_count, battery_count, moisture_count, ph_count, light_count, counts + 1)
+    rollup_entity = {
+        "PartitionKey": partition_key,
+        "RowKey": row_key,
+        "deviceIp": entry.get("deviceIp"),
+        "granularity": granularity,
+        "timestamp": rollup_row_key(bucket_start),
+        "count": next_count,
+        "humidity": humidity,
+        "temperature": temperature,
+        "battery": battery,
+        "moisture": moisture,
+        "ph": ph,
+        "light": light,
+        "lastUpdated": now_iso(),
+    }
+
+    try:
+        client.upsert_entity(mode=UpdateMode.REPLACE, entity=rollup_entity)
+    except Exception as e:
+        logging.warning("Failed to update %s rollup: %s", granularity, e)
+
+
+def update_rollups(entry: dict) -> None:
+    for granularity in ("hour", "day", "month"):
+        update_rollup_entry(entry, granularity)
 
 def now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat() + "Z"
@@ -237,6 +381,11 @@ def store_sensor_entry(payload: dict) -> dict:
         )
     except Exception as e:
         logging.error(f"Failed to auto-persist device: {e}")
+
+    try:
+        update_rollups(entry)
+    except Exception as e:
+        logging.error(f"Failed to update history rollups: {e}")
         
     logging.info("Sensor data recorded for %s (device_ts_provided=%s)", device_ip, bool(parsed_dt))
     return entry
@@ -314,6 +463,171 @@ def fetch_latest_sensor_entry(device_ip: Optional[str] = None, device_id: Option
     return {**dict(latest), "device": dict(device) if device else None}
 
 
+def get_history_target_points(timescale: str) -> Optional[int]:
+    if timescale == "1h":
+        return None
+    if timescale == "1d":
+        return 48
+    if timescale == "1m":
+        return 30
+    if timescale == "1y":
+        return 365
+    if timescale == "all":
+        return 365
+    return 60
+
+
+def parse_timestamp(value) -> Optional[datetime.datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def fetch_rollup_history(device_ip: Optional[str], timescale: str, start_timestamp: Optional[str], end_timestamp: Optional[str], limit: Optional[int]) -> list:
+    # Try preferred granularity, then fall back to coarser granularities if no rows found.
+    granularities = get_rollup_granularities(timescale)
+    if not granularities:
+        return []
+
+    client = get_rollup_table_client()
+    if not client:
+        return []
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    since = parse_timestamp(start_timestamp)
+    until = parse_timestamp(end_timestamp)
+
+    if not since:
+        if timescale == "1d":
+            since = now - datetime.timedelta(days=1)
+        elif timescale == "1m":
+            since = now - datetime.timedelta(days=30)
+        elif timescale == "1y":
+            since = now - datetime.timedelta(days=365)
+        elif timescale == "all":
+            since = now - datetime.timedelta(days=3650)
+
+    if not until:
+        until = now
+
+    for granularity in granularities:
+        start_t = datetime.datetime.now(datetime.timezone.utc)
+        filters = []
+        if device_ip:
+            filters.append(f"PartitionKey eq '{rollup_bucket_key(device_ip, granularity)}'")
+        if since:
+            filters.append(f"RowKey ge '{rollup_row_key(floor_to_bucket(since, granularity))}'")
+        if until:
+            filters.append(f"RowKey le '{rollup_row_key(floor_to_bucket(until, granularity))}'")
+
+        query = " and ".join(filters) if filters else ""
+
+        try:
+            entities = list(client.query_entities(
+                query_filter=query,
+                select=["PartitionKey", "RowKey", "timestamp", "deviceIp", "count", "humidity", "temperature", "battery", "moisture", "ph", "light", "granularity", "lastUpdated"]
+            ))
+        except Exception as e:
+            logging.error(f"Rollup query error for granularity {granularity}: {e}")
+            continue
+
+        rows = sorted([dict(e) for e in entities], key=lambda x: str(x.get("timestamp", "")))
+        elapsed = (datetime.datetime.now(datetime.timezone.utc) - start_t).total_seconds()
+        logging.debug("Rollup query granularity=%s returned %s rows in %ss", granularity, len(rows), elapsed)
+        if not rows:
+            # Try next (coarser) granularity
+            logging.debug("No rollup rows found for granularity %s, trying coarser if available", granularity)
+            continue
+
+        for row in rows:
+            row["isAggregated"] = True
+        if limit:
+            return rows[-limit:]
+        return rows
+
+    return []
+
+
+def aggregate_history_rows(raw_history: list, timescale: str) -> list:
+    target_points = get_history_target_points(timescale)
+    if not target_points or len(raw_history) <= target_points:
+        return raw_history
+
+    parsed_rows = []
+    for row in raw_history:
+        timestamp = row.get("timestamp")
+        if not timestamp:
+            continue
+        try:
+            parsed_dt = datetime.datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+        except Exception:
+            continue
+        parsed_rows.append((parsed_dt, row))
+
+    if len(parsed_rows) <= target_points:
+        return raw_history
+
+    parsed_rows.sort(key=lambda item: item[0])
+    span_seconds = max(1, int((parsed_rows[-1][0] - parsed_rows[0][0]).total_seconds()))
+    bucket_seconds = max(1, (span_seconds + target_points - 1) // target_points)
+
+    buckets = []
+    current_bucket_key = None
+    current_bucket: Dict[str, Any] = {}
+
+    def avg(values):
+        numeric = [v for v in values if isinstance(v, (int, float))]
+        return round(sum(numeric) / len(numeric), 2) if numeric else None
+
+    for parsed_dt, row in parsed_rows:
+        bucket_key = int(parsed_dt.timestamp()) // bucket_seconds
+        if current_bucket_key != bucket_key:
+            if current_bucket.get("timestamps"):
+                buckets.append(current_bucket)
+            current_bucket_key = bucket_key
+            current_bucket = {
+                "timestamps": [],
+                "humidity": [],
+                "temperature": [],
+                "battery": [],
+                "moisture": [],
+                "ph": [],
+                "light": [],
+                "deviceIp": row.get("deviceIp"),
+            }
+
+        current_bucket["timestamps"].append(parsed_dt)
+        current_bucket["humidity"].append(row.get("humidity"))
+        current_bucket["temperature"].append(row.get("temperature"))
+        current_bucket["battery"].append(row.get("battery"))
+        current_bucket["moisture"].append(row.get("moisture"))
+        current_bucket["ph"].append(row.get("ph"))
+        current_bucket["light"].append(row.get("light"))
+
+    if current_bucket.get("timestamps"):
+        buckets.append(current_bucket)
+
+    aggregated = []
+    for bucket in buckets:
+        bucket_end = max(bucket["timestamps"])
+        aggregated.append({
+            "timestamp": bucket_end.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "humidity": avg(bucket["humidity"]),
+            "temperature": avg(bucket["temperature"]),
+            "battery": avg(bucket["battery"]),
+            "moisture": avg(bucket["moisture"]),
+            "ph": avg(bucket["ph"]),
+            "light": avg(bucket["light"]),
+            "deviceIp": bucket.get("deviceIp"),
+            "isAggregated": True,
+        })
+
+    return aggregated
+
+
 def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h", limit: Optional[int] = 100, raw: bool = False, start_timestamp: Optional[str] = None, end_timestamp: Optional[str] = None) -> list:
     client = get_table_client("SensorData")
     if not client:
@@ -354,12 +668,26 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
 
     query = " and ".join(filters) if filters else ""
         
+    # Long-range views should prefer the rollup table and avoid the raw SensorData scan.
+    if not raw and get_rollup_granularity(timescale):
+        t0 = datetime.datetime.now(datetime.timezone.utc)
+        rollup_history = fetch_rollup_history(device_ip, timescale, start_timestamp, end_timestamp, limit)
+        t_rollup = (datetime.datetime.now(datetime.timezone.utc) - t0).total_seconds()
+        if rollup_history:
+            logging.debug(f"Returning {len(rollup_history)} rollup data points for timescale={timescale} (rollup_fetch={t_rollup}s)")
+            return rollup_history
+        else:
+            logging.debug(f"No rollups available for timescale={timescale} (checked {get_rollup_granularities(timescale)}); falling back to raw query")
+
     try:
-        entities = list(client.query_entities(query_filter=query))
+        entities = list(client.query_entities(
+            query_filter=query,
+            select=["PartitionKey", "RowKey", "timestamp", "deviceIp", "humidity", "temperature", "battery", "moisture", "ph", "light", "Timestamp"]
+        ))
     except Exception as e:
         logging.error(f"Table query error: {e}")
         return []
-        
+
     # Sort chronological
     raw_history = sorted([dict(e) for e in entities], key=lambda x: str(x.get("timestamp", "")))
 
@@ -384,34 +712,8 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
         logging.debug(f"Returning {len(raw_history)} raw data points (no aggregation)")
         return raw_history[-limit:] if limit else raw_history
 
-    # If we have too many points, aggregate them to ~60 points for the chart
-    target_points = 60
-    if len(raw_history) <= target_points or timescale == "1h":
-        return raw_history[-limit:] if (timescale == "all" and limit) else raw_history
-
-    # Simple bucket aggregation
-    chunk_size = len(raw_history) // target_points
-    aggregated = []
-    for i in range(0, len(raw_history), chunk_size):
-        chunk = raw_history[i:i + chunk_size]
-        if not chunk: continue
-        
-        def avg(key):
-            vals = [c[key] for c in chunk if c.get(key) is not None and isinstance(c[key], (int, float))]
-            return round(sum(vals) / len(vals), 2) if vals else None
-
-        aggregated.append({
-            "timestamp": chunk[-1]["timestamp"],
-            "moisture": avg("moisture"),
-            "temperature": avg("temperature"),
-            "humidity": avg("humidity"),
-            "ph": avg("ph"),
-            "light": avg("light"),
-            "deviceIp": chunk[0].get("deviceIp"),
-            "isAggregated": True
-        })
-    
-    return aggregated[:target_points + 5]
+    aggregated = aggregate_history_rows(raw_history, timescale)
+    return aggregated if not limit else aggregated[-limit:]
 
 
 _control_commands: dict = {} # Keep commands in-memory for now as they are transient
@@ -505,8 +807,7 @@ def get_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
         if limit_param is not None:
             limit = int(limit_param)
         else:
-            # Preserve capped defaults for standard chart ranges, but keep custom/raw uncapped.
-            limit = None if raw else 100
+            limit = None
         
         data = fetch_sensor_history(
             device_ip=device_ip, 

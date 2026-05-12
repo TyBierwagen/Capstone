@@ -493,7 +493,7 @@
         </div>
 
         <div class="form-row">
-          <label for="functionKey">Access Key (Optional)</label>
+          <label for="functionKey">Access Key</label>
           <input type="password" id="functionKey" placeholder="Enter Azure Function key" />
           <div id="functionKeyHint" style="font-size:11px; color:#94a3b8; margin-top:6px; display:none;">Key set: <span id="maskedKey">••••••••</span></div>
         </div>
@@ -586,6 +586,14 @@
               <option value="all">All Time</option>
               <option value="custom">Custom Range</option>
             </select>
+            <div style="display:flex; flex-direction:column; align-items:flex-start; gap:4px; background: rgba(255,255,255,0.03); padding:6px 10px; border-radius:10px; border:1px solid rgba(255,255,255,0.06);">
+              <label for="rawHistoryToggle" style="font-size: 13px; color: #94a3b8; margin: 0;">Raw data</label>
+              <label class="switch small-switch" title="Fetch unaggregated points. This is slower for month, year, and all-time views.">
+                <input type="checkbox" id="rawHistoryToggle">
+                <span class="slider"></span>
+              </label>
+              <span style="font-size: 11px; color: #94a3b8;">(slower to load for month, year, and all-time)</span>
+            </div>
             <button id="downloadTimeframeBtn" class="plain" style="width:auto; padding:8px 12px; font-size:13px;">Download CSV</button>
           </div>
           <div style="display:flex; align-items:center; gap:8px;">

@@ -5,6 +5,13 @@ import { updateChart, initChart } from './chart.js';
 const PROD_API_URL = 'https://soilrobot-apim-dev.azure-api.net/api';
 const LOCAL_API_URL = 'http://localhost:7071/api';
 const ALL_TIMESCALES = ['1h', '1d', '1m', '1y', 'all'];
+const PREFETCH_TIMESCALES = {
+  '1h': ['1d'],
+  '1d': ['1h'],
+  '1m': ['1d'],
+  '1y': [],
+  'all': []
+};
 
 function setChartLoadingOverlay(visible) {
   const chartContainer = document.querySelector('[style*="height: 300px"]');
@@ -21,13 +28,13 @@ function setChartLoadingOverlay(visible) {
   loader.style.display = visible ? 'flex' : 'none';
 }
 
-// Always use production API endpoint
-export function getApiBaseUrl() { return PROD_API_URL; }
+export function getApiBaseUrl() { return state.useProd ? PROD_API_URL : LOCAL_API_URL; }
 
-async function fetchHistoryByTimescale(baseUrl, params, fetchOptions, timescale) {
+async function fetchHistoryByTimescale(baseUrl, params, fetchOptions, timescale, rawHistory = false) {
   const historyParams = new URLSearchParams(params);
   historyParams.append('history', 'true');
   historyParams.append('timescale', timescale);
+  if (rawHistory) historyParams.append('raw', 'true');
   const base = getApiBaseUrl();
   const response = await fetch(`${base.replace(/\/$/, '')}/sensor-data?${historyParams.toString()}`, fetchOptions);
   if (!response.ok) throw new Error(`History fetch failed for ${timescale}`);
@@ -44,9 +51,11 @@ async function fetchHistoryByTimescale(baseUrl, params, fetchOptions, timescale)
   state.historyCache[timescale] = rows;
   // If battery values are missing for aggregated timescales, attempt a raw-range fallback
   try {
+    if (rawHistory) return rows;
     const battCount = rows.filter(r => r && r.battery !== null && r.battery !== undefined && r.battery !== '').length;
     const aggregatedTimes = ['1d','1m','1y','all'];
-    if (battCount === 0 && aggregatedTimes.includes(timescale) && rows.length > 0) {
+    const allowRawFallback = timescale === '1d' || timescale === '1h';
+    if (battCount === 0 && aggregatedTimes.includes(timescale) && allowRawFallback && rows.length > 0) {
       try {
         addLogEntry(`No battery in aggregated ${timescale} — fetching raw range fallback`);
         // Compute approximate start for the timescale
@@ -87,8 +96,10 @@ async function fetchHistoryByTimescale(baseUrl, params, fetchOptions, timescale)
   return rows;
 }
 
-async function ensureAllTimescalesCached(baseUrl, params, fetchOptions, selectedTimescale) {
-  const missingTimescales = ALL_TIMESCALES.filter((ts) => {
+async function ensureAllTimescalesCached(baseUrl, params, fetchOptions, selectedTimescale, rawHistory = false) {
+  if (rawHistory) return;
+  const prefetchTargets = PREFETCH_TIMESCALES[selectedTimescale] || [];
+  const missingTimescales = prefetchTargets.filter((ts) => {
     if (ts === selectedTimescale) return false;
     const cached = state.historyCache?.[ts];
     return !(Array.isArray(cached) && cached.length > 0);
@@ -196,6 +207,7 @@ export async function refreshData(showLoading = false) {
   try {
     const baseUrl = getApiBaseUrl();
     const selectedTimescale = document.getElementById('timeScale')?.value || '1h';
+    const rawHistoryRequested = !!document.getElementById('rawHistoryToggle')?.checked;
     const params = new URLSearchParams();
     if (state.deviceIp) params.append('deviceIp', state.deviceIp);
     const apiKey = localStorage.getItem('functionKey');
@@ -225,7 +237,7 @@ export async function refreshData(showLoading = false) {
           return [];
         });
     } else {
-      selectedHistoryPromise = fetchHistoryByTimescale(baseUrl, params, fetchOptions, selectedTimescale)
+      selectedHistoryPromise = fetchHistoryByTimescale(baseUrl, params, fetchOptions, selectedTimescale, rawHistoryRequested)
         .catch((error) => {
           historyFetchError = error;
           return [];
@@ -273,7 +285,7 @@ export async function refreshData(showLoading = false) {
     updateChart(chartData, chartTimescale);
 
     // Warm remaining ranges in background so all timeframe switches work offline.
-    ensureAllTimescalesCached(baseUrl, params, fetchOptions, selectedTimescale);
+    ensureAllTimescalesCached(baseUrl, params, fetchOptions, selectedTimescale, rawHistoryRequested);
     const displayTimescale = inCustomMode ? 'custom range' : timescale;
     const scaleLabel = document.querySelector(`#timeScale option[value="${document.getElementById('timeScale')?.value || '1h'}"]`)?.textContent || displayTimescale;
     addLogEntry(`Synced data for ${scaleLabel}`);

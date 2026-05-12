@@ -145,6 +145,46 @@ npm start
 # Functions available at http://localhost:7071
 ```
 
+The local backend is configured to use Azure Storage only. Set both `AzureWebJobsStorage` and `STORAGE_CONNECTION_STRING` in `functions/local.settings.json` to a real Azure Storage connection string before starting the host. Azurite is no longer a supported backend path for this project.
+
+If you already have raw `SensorData` rows and want 1m/1y to load fast, run the one-time rollup backfill first:
+
+```bash
+cd functions
+python backfill_rollups.py
+```
+
+Recommended safe mode (no table delete):
+
+```bash
+cd functions
+python backfill_rollups.py --keep-existing
+```
+
+### Rollup Troubleshooting (1m slow, 1y fast)
+
+If `timescale=1m` is still slow while `timescale=1y` is fast, the API is usually falling back to raw `SensorData` scans because `day` rollups are missing for the target device.
+
+1. Check rollup coverage:
+
+```bash
+cd functions
+python check_rollups.py
+```
+
+2. If a specific device partition has raw rows but no rollups, backfill that partition directly:
+
+```bash
+cd functions
+python backfill_device.py 192_168_1_33
+```
+
+Use the device partition format from Table Storage (`192_168_1_33`) rather than dotted IP format.
+
+Stop the Function host before running the backfill, then restart it after the script completes.
+
+`& "~\AppData\Roaming\npm\func.cmd" start --port 7071` starts the local backend.
+
 ## 🔧 Configuration
 
 ### Terraform Variables
