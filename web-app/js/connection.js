@@ -224,6 +224,8 @@ export async function refreshData(showLoading = false) {
     const baseUrl = getApiBaseUrl();
     const selectedTimescale = document.getElementById('timeScale')?.value || '1h';
     const rawHistoryRequested = !!document.getElementById('rawHistoryToggle')?.checked;
+    const isInitialHistoryLoad = !Array.isArray(state.historyData) || state.historyData.length === 0;
+    const shouldRefreshHistory = showLoading || isInitialHistoryLoad || selectedTimescale === '1h';
     const params = new URLSearchParams();
     if (state.deviceIp) params.append('deviceIp', state.deviceIp);
     const apiKey = localStorage.getItem('functionKey');
@@ -263,7 +265,7 @@ export async function refreshData(showLoading = false) {
 
     let selectedHistoryPromise;
     let historyFetchError = null;
-    if (inCustomMode && state.customDateRange) {
+    if (inCustomMode && state.customDateRange && (showLoading || isInitialHistoryLoad)) {
       const customParams = new URLSearchParams(historyParams);
       customParams.append('history', 'true');
       customParams.append('timescale', 'all');
@@ -280,34 +282,40 @@ export async function refreshData(showLoading = false) {
           historyFetchError = error;
           return [];
         });
-    } else {
+    } else if (shouldRefreshHistory) {
       selectedHistoryPromise = fetchHistoryByTimescale(baseUrl, historyParams, fetchOptions, selectedTimescale, rawHistoryRequested)
         .catch((error) => {
           historyFetchError = error;
           return [];
         });
+    } else {
+      selectedHistoryPromise = Promise.resolve(null);
     }
     
     let chartData = [];
     let chartTimescale = selectedTimescale;
 
     const selectedHistoryRows = await selectedHistoryPromise;
-    chartData = selectedHistoryRows;
-    if (historyFetchError) {
-      console.warn('History fetch failed', historyFetchError);
-      addLogEntry('Chart history is still loading or unavailable');
-    } else if (inCustomMode && state.customDateRange) {
-      // Already server-filtered and raw when in custom mode.
-      chartTimescale = 'custom';
-      addLogEntry(`Updated chart with ${chartData.length} points in custom range`);
+    if (Array.isArray(selectedHistoryRows)) {
+      chartData = selectedHistoryRows;
+      if (historyFetchError) {
+        console.warn('History fetch failed', historyFetchError);
+        addLogEntry('Chart history is still loading or unavailable');
+      } else if (inCustomMode && state.customDateRange) {
+        // Already server-filtered and raw when in custom mode.
+        chartTimescale = 'custom';
+        addLogEntry(`Updated chart with ${chartData.length} points in custom range`);
+      }
+      updateChart(chartData, chartTimescale);
     }
-    updateChart(chartData, chartTimescale);
 
     // Warm remaining ranges in background so all timeframe switches work offline.
-    ensureAllTimescalesCached(baseUrl, historyParams, fetchOptions, selectedTimescale, rawHistoryRequested);
+    if (shouldRefreshHistory && !inCustomMode) {
+      ensureAllTimescalesCached(baseUrl, historyParams, fetchOptions, selectedTimescale, rawHistoryRequested);
+    }
     const displayTimescale = inCustomMode ? 'custom range' : timescale;
     const scaleLabel = document.querySelector(`#timeScale option[value="${document.getElementById('timeScale')?.value || '1h'}"]`)?.textContent || displayTimescale;
-    addLogEntry(`Synced data for ${scaleLabel}`);
+    addLogEntry(shouldRefreshHistory ? `Synced data for ${scaleLabel}` : 'Synced latest telemetry');
   } catch (error) { 
     console.error('Refresh error', error); 
     showAlert('Unable to reach the API', 'error'); 

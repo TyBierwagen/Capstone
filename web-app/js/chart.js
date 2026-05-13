@@ -9,13 +9,69 @@ let tickFormatMode = '1h';
 function getAxisId(index) { return index === 0 ? 'y' : 'y' + index; }
 function getAxisPosition(index) { return (index % 2 === 0) ? 'right' : 'left'; }
 
-function formatDateDDMMYYYY(value) {
+function formatDateTimeTwoLine(value) {
   const d = new Date(value);
   if (isNaN(d.getTime())) return '';
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const year = d.getFullYear();
-  return `${month}/${day}/${year}`;
+  
+  // Determine range from loaded history data
+  let minDate, maxDate;
+  
+  if (state.historyData && Array.isArray(state.historyData) && state.historyData.length > 0) {
+    const timestamps = state.historyData
+      .map(h => {
+        try {
+          let ts = String(h.timestamp || '').trim();
+          ts = ts.replace(/\+00:00Z$/, 'Z').replace(/\+00:00$/, 'Z');
+          return new Date(ts).getTime();
+        } catch {
+          return NaN;
+        }
+      })
+      .filter(t => !isNaN(t));
+    
+    if (timestamps.length > 0) {
+      const minMs = Math.min(...timestamps);
+      const maxMs = Math.max(...timestamps);
+      minDate = new Date(minMs);
+      maxDate = new Date(maxMs);
+    }
+  }
+  
+  const hour = String(d.getHours()).padStart(2, '0');
+  const minute = String(d.getMinutes()).padStart(2, '0');
+  
+  if (minDate && maxDate) {
+    const minYear = minDate.getFullYear();
+    const maxYear = maxDate.getFullYear();
+    const minMonth = minDate.getMonth();
+    const maxMonth = maxDate.getMonth();
+    const minDay = minDate.getDate();
+    const maxDay = maxDate.getDate();
+    
+    // Different years: show year, month, day, time
+    if (minYear !== maxYear) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}\n${hour}:${minute}`;
+    }
+    
+    // Different months (same year): show month, day, time
+    if (minMonth !== maxMonth) {
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${month}/${day}\n${hour}:${minute}`;
+    }
+    
+    // Different days (same month): show day, time
+    if (minDay !== maxDay) {
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${day}\n${hour}:${minute}`;
+    }
+  }
+  
+  // Same day or fallback: show time only
+  return `${hour}:${minute}`;
 }
 
 function tooltipTitleFromTimestamp(items) {
@@ -23,7 +79,7 @@ function tooltipTitleFromTimestamp(items) {
   const first = items[0];
   const x = first?.parsed?.x ?? first?.raw?.x;
   if (typeof x !== 'number') return '';
-  return formatDateDDMMYYYY(x);
+  return formatDateTimeTwoLine(x);
 }
 
 function csvEscape(value) {
@@ -155,18 +211,7 @@ export function normalizeAxes() {
   // Always ensure fresh date formatter for X axis
   const dateFormatter = (value) => {
     if (typeof value !== 'number') return '';
-    const d = new Date(value);
-    if (isNaN(d.getTime())) return '';
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    const year = d.getFullYear();
-    const hour = String(d.getHours()).padStart(2, '0');
-    const min = String(d.getMinutes()).padStart(2, '0');
-    // Show date + time for shorter timescales and custom ranges, date only for longer ones
-    if (state.lastTimescale === '1h' || state.lastTimescale === '24h' || state.lastTimescale === 'custom') {
-      return `${month}/${day} ${hour}:${min}`;
-    }
-    return `${month}/${day}/${year}`;
+    return formatDateTimeTwoLine(value);
   };
   const scales = { x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', callback: dateFormatter } } };
   let firstVisibleFound = false;
@@ -228,18 +273,7 @@ export function updateChart(history, timescale = '1h') {
   // Start with fresh options to avoid circular references from previous chart updates
   const dateFormatter = (value) => {
     if (typeof value !== 'number') return '';
-    const d = new Date(value);
-    if (isNaN(d.getTime())) return '';
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    const year = d.getFullYear();
-    const hour = String(d.getHours()).padStart(2, '0');
-    const min = String(d.getMinutes()).padStart(2, '0');
-    // Show date + time for shorter timescales and custom ranges, date only for longer ones
-    if (timescale === '1h' || timescale === '24h' || timescale === 'custom') {
-      return `${month}/${day} ${hour}:${min}`;
-    }
-    return `${month}/${day}/${year}`;
+    return formatDateTimeTwoLine(value);
   };
   state.chart.options = {
     responsive: true,
@@ -330,6 +364,14 @@ export function updateChart(history, timescale = '1h') {
       state.chart.data.datasets[0].label = `Humidity MA (${w})`;
       state.chart.data.datasets[1].label = `Temp MA (${w})`;
       if (state.chart.data.datasets[2]) state.chart.data.datasets[2].label = `Battery MA (${w})`;
+    } else {
+      // Reset labels to original when MA is off
+      state.chart.data.datasets[0].data = pointsHum;
+      state.chart.data.datasets[1].data = pointsTemp;
+      if (state.chart.data.datasets[2]) state.chart.data.datasets[2].data = pointsBattery;
+      state.chart.data.datasets[0].label = `Humidity (%)`;
+      state.chart.data.datasets[1].label = `Temp (${unitLabel})`;
+      if (state.chart.data.datasets[2]) state.chart.data.datasets[2].label = `Battery (V)`;
     }
   } catch (e) {
     console.debug('apply moving average failed', e);
