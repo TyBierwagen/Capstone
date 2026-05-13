@@ -179,7 +179,7 @@ export async function fetchCustomDateRange(startDate, endDate) {
   }
 }
 
-export async function refreshData(showLoading = false) {
+export async function refreshData(showLoading = false, isAuto = false) {
   if (!state.isConnected) { showAlert('Activate monitoring to refresh', 'error'); return; }
   if (state.refreshInProgress) {
     console.debug('Refresh already in progress; skipping overlapping request');
@@ -210,7 +210,17 @@ export async function refreshData(showLoading = false) {
     const selectedTimescale = document.getElementById('timeScale')?.value || '1h';
     const rawHistoryRequested = !!document.getElementById('rawHistoryToggle')?.checked;
     const isInitialHistoryLoad = !Array.isArray(state.historyData) || state.historyData.length === 0;
-    const shouldRefreshHistory = showLoading || isInitialHistoryLoad || selectedTimescale === '1h';
+    let shouldRefreshHistory = showLoading || isInitialHistoryLoad || selectedTimescale === '1h';
+    // If this refresh was triggered by the auto-refresh interval, avoid reloading
+    // aggregated month/year views frequently — these are updated via rollups/backfill
+    // once per day. Only auto-refresh history for fine-grained (1h) or when raw
+    // data is explicitly requested.
+    if (isAuto && !rawHistoryRequested) {
+      const skipAutoHistory = ['1m', '1y'];
+      if (skipAutoHistory.includes(selectedTimescale)) {
+        shouldRefreshHistory = false;
+      }
+    }
     const params = new URLSearchParams();
     if (state.deviceIp) params.append('deviceIp', state.deviceIp);
     const apiKey = localStorage.getItem('functionKey');
@@ -345,7 +355,15 @@ export async function checkApiHealth() {
   }
 }
 
-export function startAutoRefresh() { stopAutoRefresh(); refreshData(); const seconds = 30; state.refreshIntervalId = setInterval(refreshData, seconds * 1000); addLogEntry(`Auto-refresh active (30s)`); }
+export function startAutoRefresh() { 
+  stopAutoRefresh();
+  // Initial auto refresh should be marked as automatic so history fetches can
+  // be skipped for aggregated views (month/year).
+  refreshData(false, true);
+  const seconds = 30;
+  state.refreshIntervalId = setInterval(() => refreshData(false, true), seconds * 1000);
+  addLogEntry(`Auto-refresh active (30s)`);
+}
 export function stopAutoRefresh() { if (state.refreshIntervalId) { clearInterval(state.refreshIntervalId); state.refreshIntervalId = null; addLogEntry('Auto-refresh paused'); } }
 
 export function toggleConnection() { if (state.isConnected) disconnect(); else connect(); }

@@ -432,6 +432,63 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
         logging.debug(f"Returning {len(raw_history)} raw data points (no aggregation)")
         return raw_history[-limit:] if limit else raw_history
 
+    # Attempt to use rollup table for aggregated timescales to avoid scanning SensorData
+    try:
+        rollup_map = {"1d": "hour", "1m": "day", "1y": "month", "all": "month"}
+        if timescale in rollup_map:
+            granularity = rollup_map[timescale]
+            rollup_client = get_table_client("SensorHistoryRollups")
+            if rollup_client:
+                rollup_entities = []
+                # If a device_ip is specified, query that device's rollup partition
+                if device_ip:
+                    pk = f"{device_ip.replace('.', '_')}|{granularity}"
+                    q = f"PartitionKey eq '{pk}'"
+                    # rollup rows use ISO timestamps in the 'timestamp' property
+                    if since:
+                        since_str = since.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+                        q = f"{q} and timestamp ge '{since_str}'"
+                    try:
+                        rollup_entities = list(rollup_client.query_entities(query_filter=q))
+                    except Exception as ex:
+                        logging.debug("Rollup partition query failed for %s: %s", pk, ex)
+                else:
+                    # No device filter: query rollups by granularity property (smaller table than SensorData)
+                    q = f"granularity eq '{granularity}'"
+                    if since:
+                        since_str = since.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+                        q = f"{q} and timestamp ge '{since_str}'"
+                    try:
+                        rollup_entities = list(rollup_client.query_entities(query_filter=q))
+                    except Exception as ex:
+                        logging.debug("Rollup global query failed for granularity=%s: %s", granularity, ex)
+
+                if rollup_entities:
+                    rows = []
+                    for e in rollup_entities:
+                        ts = e.get('timestamp') or e.get('RowKey')
+                        if isinstance(ts, datetime.datetime):
+                            ts = ts.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+                        rows.append({
+                            'timestamp': sanitize_timestamp(ts) if ts else None,
+                            'moisture': e.get('moisture'),
+                            'temperature': e.get('temperature'),
+                            'humidity': e.get('humidity'),
+                            'ph': e.get('ph'),
+                            'light': e.get('light'),
+                            'battery': e.get('battery'),
+                            'deviceIp': e.get('deviceIp'),
+                            'isRollup': True,
+                        })
+
+                    rows_sorted = sorted([r for r in rows if r.get('timestamp')], key=lambda x: str(x.get('timestamp')))
+                    # Respect the caller's limit when appropriate
+                    if limit:
+                        return rows_sorted[-limit:]
+                    return rows_sorted
+    except Exception:
+        logging.debug('Rollup fetch attempt failed; falling back to raw SensorData aggregation')
+
     # If we have too many points, aggregate them to ~60 points for the chart
     target_points = 60
     if len(raw_history) <= target_points or timescale == "1h":
