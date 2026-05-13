@@ -279,12 +279,10 @@ export async function checkApiHealth() {
 
 export function startAutoRefresh() { 
   stopAutoRefresh();
-  // Initial auto refresh should be marked as automatic so history fetches can
-  // be skipped for aggregated views (month/year).
-  refreshData(false, true);
-  const seconds = 30;
-  state.refreshIntervalId = setInterval(() => refreshData(false, true), seconds * 1000);
-  addLogEntry(`Auto-refresh active (30s)`);
+  // Rollups/backfills are handled in the backend; keep frontend refresh explicit.
+  refreshData(true, false);
+  state.refreshIntervalId = null;
+  addLogEntry('Background polling disabled');
 }
 export function stopAutoRefresh() { if (state.refreshIntervalId) { clearInterval(state.refreshIntervalId); state.refreshIntervalId = null; addLogEntry('Auto-refresh paused'); } }
 
