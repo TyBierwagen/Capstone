@@ -1185,6 +1185,7 @@ def get_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
             limit = int(limit_param)
         else:
             limit = None
+        allow_all_devices = parse_bool(req.params.get("allowAllDevices"), True)
         
         data = fetch_sensor_history(
             device_ip=device_ip,
@@ -1193,7 +1194,7 @@ def get_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
             raw=raw,
             start_timestamp=start_timestamp,
             end_timestamp=end_timestamp,
-            allow_all_devices=True,
+            allow_all_devices=allow_all_devices,
         )
         return json_response({"count": len(data), "history": data, "timescale": timescale})
 
