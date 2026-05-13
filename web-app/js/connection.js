@@ -4,14 +4,6 @@ import { updateChart, initChart } from './chart.js';
 
 const PROD_API_URL = 'https://soilrobot-apim-dev.azure-api.net/api';
 const LOCAL_API_URL = 'http://localhost:7071/api';
-const ALL_TIMESCALES = ['1h', '1d', '1m', '1y', 'all'];
-const PREFETCH_TIMESCALES = {
-  '1h': ['1d'],
-  '1d': ['1h'],
-  '1m': ['1d'],
-  '1y': [],
-  'all': []
-};
 
 function setChartLoadingOverlay(visible) {
   const chartContainer = document.querySelector('[style*="height: 300px"]');
@@ -49,71 +41,8 @@ async function fetchHistoryByTimescale(baseUrl, params, fetchOptions, timescale,
     if (battCount === 0) addLogEntry('Warning: No battery values returned for this timescale');
   } catch (e) { console.debug('history diagnostics failed', e); }
   state.historyCache[timescale] = rows;
-  // If battery values are missing for aggregated timescales, attempt a raw-range fallback
-  try {
-    if (rawHistory) return rows;
-    const battCount = rows.filter(r => r && r.battery !== null && r.battery !== undefined && r.battery !== '').length;
-    const aggregatedTimes = ['1d','1m','1y','all'];
-    const allowRawFallback = timescale === '1d' || timescale === '1h';
-    if (battCount === 0 && aggregatedTimes.includes(timescale) && allowRawFallback && rows.length > 0) {
-      try {
-        addLogEntry(`No battery in aggregated ${timescale} — fetching raw range fallback`);
-        // Compute approximate start for the timescale
-        const now = new Date();
-        let start = new Date(now);
-        if (timescale === '1d') start.setDate(now.getDate() - 1);
-        else if (timescale === '1m') start.setMonth(now.getMonth() - 1);
-        else if (timescale === '1y') start.setFullYear(now.getFullYear() - 1);
-        else if (timescale === 'all') start = new Date(0);
-
-        const rawParams = new URLSearchParams(params);
-        rawParams.append('history','true');
-        rawParams.append('timescale','all');
-        rawParams.append('raw','true');
-        rawParams.append('start', start.toISOString());
-        rawParams.append('end', now.toISOString());
-
-        const base = getApiBaseUrl();
-        const resp = await fetch(`${base.replace(/\/$/, '')}/sensor-data?${rawParams.toString()}`, fetchOptions);
-        if (resp.ok) {
-          const rawBody = await resp.json();
-          const rawRows = Array.isArray(rawBody?.history) ? rawBody.history : [];
-          const rawBatt = rawRows.filter(r => r && r.battery !== null && r.battery !== undefined && r.battery !== '').length;
-          console.debug(`Raw fallback returned ${rawRows.length} rows (batt:${rawBatt})`);
-          if (rawRows.length > 0 && rawBatt > 0) {
-            state.historyCache[timescale] = rawRows;
-            return rawRows;
-          }
-        } else {
-          console.debug('Raw fallback fetch failed', resp.status);
-        }
-      } catch (fbErr) {
-        console.debug('raw fallback error', fbErr);
-      }
-    }
-  } catch (e) { console.debug('post-fetch fallback check failed', e); }
 
   return rows;
-}
-
-async function ensureAllTimescalesCached(baseUrl, params, fetchOptions, selectedTimescale, rawHistory = false) {
-  if (rawHistory) return;
-  const prefetchTargets = PREFETCH_TIMESCALES[selectedTimescale] || [];
-  const missingTimescales = prefetchTargets.filter((ts) => {
-    if (ts === selectedTimescale) return false;
-    const cached = state.historyCache?.[ts];
-    return !(Array.isArray(cached) && cached.length > 0);
-  });
-
-  if (missingTimescales.length === 0) return;
-
-  try {
-    await Promise.all(missingTimescales.map((ts) => fetchHistoryByTimescale(baseUrl, params, fetchOptions, ts)));
-    addLogEntry(`Cached chart ranges: ${missingTimescales.join(', ')}`);
-  } catch (error) {
-    console.warn('Background cache prefetch failed', error);
-    addLogEntry('Some chart ranges could not be cached yet');
-  }
 }
 
 export async function fetchCustomDateRange(startDate, endDate) {
@@ -211,16 +140,12 @@ export async function refreshData(showLoading = false, isAuto = false) {
     const rawHistoryRequested = !!document.getElementById('rawHistoryToggle')?.checked;
     const isInitialHistoryLoad = !Array.isArray(state.historyData) || state.historyData.length === 0;
     let shouldRefreshHistory = showLoading || isInitialHistoryLoad || selectedTimescale === '1h';
-    // If this refresh was triggered by the auto-refresh interval, avoid reloading
-    // aggregated month/year views frequently — these are updated via rollups/backfill
-    // once per day. Only auto-refresh history for fine-grained (1h) or when raw
-    // data is explicitly requested.
-    if (isAuto && !rawHistoryRequested) {
-      const skipAutoHistory = ['1m', '1y'];
-      if (skipAutoHistory.includes(selectedTimescale)) {
-        shouldRefreshHistory = false;
+    // If the user changed the timescale since the last successful load, force a history refresh
+    try {
+      if (state.lastTimescale && state.lastTimescale !== selectedTimescale) {
+        shouldRefreshHistory = true;
       }
-    }
+    } catch (e) { /* ignore */ }
     const params = new URLSearchParams();
     if (state.deviceIp) params.append('deviceIp', state.deviceIp);
     const apiKey = localStorage.getItem('functionKey');
@@ -302,11 +227,8 @@ export async function refreshData(showLoading = false, isAuto = false) {
         addLogEntry(`Updated chart with ${chartData.length} points in custom range`);
       }
       updateChart(chartData, chartTimescale);
-    }
-
-    // Warm remaining ranges in background so all timeframe switches work offline.
-    if (shouldRefreshHistory && !inCustomMode) {
-      ensureAllTimescalesCached(baseUrl, historyParams, fetchOptions, selectedTimescale, rawHistoryRequested);
+      // remember which timescale we just loaded so switching back doesn't incorrectly skip fetches
+      try { state.lastTimescale = selectedTimescale; } catch (e) { /* ignore */ }
     }
     const displayTimescale = inCustomMode ? 'custom range' : timescale;
     const scaleLabel = document.querySelector(`#timeScale option[value="${document.getElementById('timeScale')?.value || '1h'}"]`)?.textContent || displayTimescale;
