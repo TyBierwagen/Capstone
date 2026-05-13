@@ -125,7 +125,23 @@ export async function fetchCustomDateRange(startDate, endDate) {
   try {
     const baseUrl = getApiBaseUrl();
     const params = new URLSearchParams();
-    if (state.deviceIp) params.append('deviceIp', state.deviceIp);
+    // If no explicit device filter, resolve the latest active device first
+    if (state.deviceIp) {
+      params.append('deviceIp', state.deviceIp);
+    } else {
+      try {
+        const apiKey = localStorage.getItem('functionKey');
+        const fetchOptions = { method: 'GET', mode: 'cors', cache: 'no-store' };
+        const latestResp = await fetch(`${baseUrl.replace(/\/$/, '')}/sensor-data${apiKey ? `?code=${apiKey}` : ''}`, fetchOptions);
+        if (latestResp.ok) {
+          const latest = await latestResp.json();
+          const resolved = latest?.deviceIp || latest?.device?.deviceIp;
+          if (resolved) params.append('deviceIp', resolved);
+        }
+      } catch (e) {
+        console.debug('Failed to resolve latest device for custom range', e);
+      }
+    }
     const apiKey = localStorage.getItem('functionKey');
     const fetchOptions = { method: 'GET', mode: 'cors', cache: 'no-store' };
     if (apiKey) params.append('code', apiKey);

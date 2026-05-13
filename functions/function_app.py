@@ -18,6 +18,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import traceback
 from functools import wraps
+import math
+from time import time
 
 app = func.FunctionApp()
 
@@ -56,6 +58,11 @@ ROLLUP_FIELD_MAP = {
 def get_rollup_table_client():
     return get_table_client(ROLLUP_TABLE_NAME)
 
+# Simple in-memory cache for rollup responses to reduce repeated query cost
+# Keyed by (device_ip, timescale, start, end) -> (ts, rows)
+_ROLLUP_CACHE: Dict[tuple, tuple[float, list]] = {}
+_ROLLUP_CACHE_TTL = 30.0  # seconds
+
 
 def floor_to_bucket(dt: datetime.datetime, granularity: str) -> datetime.datetime:
     dt = dt.replace(microsecond=0)
@@ -84,9 +91,9 @@ def get_rollup_granularity(timescale: str) -> Optional[str]:
     if timescale == "1d":
         return "hour"
     if timescale == "1m":
-        return "day"
+        return "hour"
     if timescale in ("1y", "all"):
-        return "month"
+        return "day"
     return None
 
 
@@ -97,9 +104,9 @@ def get_rollup_granularities(timescale: str) -> list:
     if timescale == "1d":
         return ["hour", "day"]
     if timescale == "1m":
-        return ["day", "month"]
+        return ["hour", "day", "month"]
     if timescale in ("1y", "all"):
-        return ["month"]
+        return ["day", "month"]
     return []
 
 
@@ -232,6 +239,13 @@ def sanitize_timestamp(value):
         if re.match(r'^\d{10}$', v):
             try:
                 dt = datetime.datetime.fromtimestamp(int(v), datetime.timezone.utc)
+                return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            except Exception:
+                pass
+        # If it's a pure 13-digit epoch in milliseconds, convert
+        if re.match(r'^\d{13}$', v):
+            try:
+                dt = datetime.datetime.fromtimestamp(int(v) / 1000.0, datetime.timezone.utc)
                 return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
             except Exception:
                 pass
@@ -463,13 +477,13 @@ def fetch_latest_sensor_entry(device_ip: Optional[str] = None, device_id: Option
     return {**dict(latest), "device": dict(device) if device else None}
 
 
-def get_history_target_points(timescale: str) -> Optional[int]:
+def get_history_target_points(timescale: str, row_count: Optional[int] = None) -> Optional[int]:
     if timescale == "1h":
         return None
     if timescale == "1d":
-        return 48
+        return 24
     if timescale == "1m":
-        return 30
+        return 720
     if timescale == "1y":
         return 365
     if timescale == "all":
@@ -487,6 +501,162 @@ def parse_timestamp(value) -> Optional[datetime.datetime]:
         return datetime.datetime.fromisoformat(normalized.replace("Z", "+00:00"))
     except Exception:
         return None
+
+
+def select_evenly_spaced_rows(rows: list, limit: Optional[int]) -> list:
+    if not limit or limit <= 0 or len(rows) <= limit:
+        return rows
+
+    step = len(rows) / float(limit)
+    selected = []
+    last_index = -1
+
+    for i in range(limit):
+        index = math.ceil((i + 1) * step) - 1
+        if index <= last_index:
+            index = last_index + 1
+        if index >= len(rows):
+            index = len(rows) - 1
+        selected.append(rows[index])
+        last_index = index
+
+    return selected
+
+
+def downsample_rows_time_window(rows: list, window_start: datetime.datetime, window_end: datetime.datetime, target_points: int) -> list:
+    if not target_points or target_points <= 0:
+        return rows
+    if not window_start or not window_end:
+        return rows
+    if window_end <= window_start:
+        return rows
+
+    window_seconds = max(1, int((window_end - window_start).total_seconds()))
+    bucket_seconds = max(1, int(math.ceil(window_seconds / float(target_points))))
+
+    buckets: Dict[int, Dict[str, Any]] = {}
+
+    for row in rows:
+        timestamp = row.get("timestamp")
+        if not timestamp:
+            continue
+        parsed_dt = parse_timestamp(timestamp)
+        if not parsed_dt:
+            continue
+        if parsed_dt < window_start or parsed_dt > window_end:
+            continue
+
+        bucket_index = int((parsed_dt - window_start).total_seconds()) // bucket_seconds
+        bucket = buckets.get(bucket_index)
+        if not bucket:
+            bucket = {
+                "timestamps": [],
+                "humidity": [],
+                "temperature": [],
+                "battery": [],
+                "moisture": [],
+                "ph": [],
+                "light": [],
+                "deviceIp": row.get("deviceIp"),
+            }
+            buckets[bucket_index] = bucket
+
+        bucket["timestamps"].append(parsed_dt)
+        bucket["humidity"].append(row.get("humidity"))
+        bucket["temperature"].append(row.get("temperature"))
+        bucket["battery"].append(row.get("battery"))
+        bucket["moisture"].append(row.get("moisture"))
+        bucket["ph"].append(row.get("ph"))
+        bucket["light"].append(row.get("light"))
+
+    if not buckets:
+        return []
+
+    def avg(values):
+        numeric = [v for v in values if isinstance(v, (int, float))]
+        return round(sum(numeric) / len(numeric), 2) if numeric else None
+
+    aggregated = []
+    for idx in sorted(buckets.keys()):
+        bucket = buckets[idx]
+        bucket_end = max(bucket["timestamps"]) if bucket.get("timestamps") else None
+        if not bucket_end:
+            continue
+        aggregated.append({
+            "timestamp": bucket_end.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "humidity": avg(bucket["humidity"]),
+            "temperature": avg(bucket["temperature"]),
+            "battery": avg(bucket["battery"]),
+            "moisture": avg(bucket["moisture"]),
+            "ph": avg(bucket["ph"]),
+            "light": avg(bucket["light"]),
+            "deviceIp": bucket.get("deviceIp"),
+            "isAggregated": True,
+        })
+
+    return aggregated
+
+
+def fill_time_buckets(rows: list, window_start: datetime.datetime, window_end: datetime.datetime, target_points: int) -> list:
+    if not target_points or target_points <= 0:
+        return rows
+    if not window_start or not window_end or window_end <= window_start:
+        return rows
+
+    window_seconds = max(1, int((window_end - window_start).total_seconds()))
+    bucket_seconds = max(1, int(math.ceil(window_seconds / float(target_points))))
+
+    buckets: list[Optional[dict]] = [None] * target_points
+    for row in rows:
+        timestamp = row.get("timestamp")
+        if not timestamp:
+            continue
+        parsed_dt = parse_timestamp(timestamp)
+        if not parsed_dt:
+            continue
+        if parsed_dt < window_start or parsed_dt > window_end:
+            continue
+        bucket_index = int((parsed_dt - window_start).total_seconds()) // bucket_seconds
+        if bucket_index < 0 or bucket_index >= target_points:
+            continue
+
+        existing = buckets[bucket_index]
+        if not existing:
+            buckets[bucket_index] = row
+            continue
+        existing_ts = parse_timestamp(existing.get("timestamp"))
+        if not existing_ts or parsed_dt >= existing_ts:
+            buckets[bucket_index] = row
+
+    device_ip = None
+    for row in rows:
+        if row.get("deviceIp"):
+            device_ip = row.get("deviceIp")
+            break
+
+    output = []
+    for idx in range(target_points):
+        bucket_end = window_start + datetime.timedelta(seconds=bucket_seconds * (idx + 1))
+        if bucket_end > window_end:
+            bucket_end = window_end
+        row = buckets[idx]
+        if row:
+            output.append(row)
+            continue
+        output.append({
+            "timestamp": bucket_end.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "humidity": None,
+            "temperature": None,
+            "battery": None,
+            "moisture": None,
+            "ph": None,
+            "light": None,
+            "deviceIp": device_ip,
+            "isAggregated": True,
+            "isGap": True,
+        })
+
+    return output
 
 
 def rebuild_rollups_for_window(window_hours: int = 48, max_rows: int = 50000) -> dict:
@@ -585,7 +755,7 @@ def rebuild_rollups_for_window(window_hours: int = 48, max_rows: int = 50000) ->
     return {"processedRows": len(entities), "writtenRollups": written}
 
 
-def fetch_rollup_history(device_ip: Optional[str], timescale: str, start_timestamp: Optional[str], end_timestamp: Optional[str], limit: Optional[int]) -> list:
+def fetch_rollup_history(device_ip: Optional[str], timescale: str, start_timestamp: Optional[str], end_timestamp: Optional[str], limit: Optional[int], allow_all_devices: bool = False) -> list:
     # Try preferred granularity, then fall back to coarser granularities if no rows found.
     granularities = get_rollup_granularities(timescale)
     if not granularities:
@@ -594,6 +764,31 @@ def fetch_rollup_history(device_ip: Optional[str], timescale: str, start_timesta
     client = get_rollup_table_client()
     if not client:
         return []
+
+    # Attempt cache lookup for common non-timeboxed rollup reads
+    cache_key = (device_ip, timescale, start_timestamp or '', end_timestamp or '', limit or 0)
+    cached = _ROLLUP_CACHE.get(cache_key)
+    if cached:
+        ts, rows = cached
+        if time() - ts < _ROLLUP_CACHE_TTL:
+            logging.debug("Serving rollup history from cache for %s (age=%.1fs)", cache_key, time() - ts)
+            return rows
+        else:
+            try:
+                del _ROLLUP_CACHE[cache_key]
+            except Exception:
+                pass
+
+    # If no device filter provided, try to resolve latest active device to avoid cross-partition scans
+    if not device_ip and not allow_all_devices:
+        try:
+            latest = fetch_latest_sensor_entry()
+            resolved_ip = latest.get("deviceIp") if latest else None
+            if resolved_ip:
+                device_ip = str(resolved_ip)
+                logging.debug("Resolved rollup device_ip to latest active device: %s", device_ip)
+        except Exception as ex:
+            logging.debug("Unable to resolve default rollup device_ip: %s", ex)
 
     now = datetime.datetime.now(datetime.timezone.utc)
     since = parse_timestamp(start_timestamp)
@@ -615,7 +810,7 @@ def fetch_rollup_history(device_ip: Optional[str], timescale: str, start_timesta
     for granularity in granularities:
         start_t = datetime.datetime.now(datetime.timezone.utc)
         filters = []
-        if device_ip:
+        if device_ip and not allow_all_devices:
             filters.append(f"PartitionKey eq '{rollup_bucket_key(device_ip, granularity)}'")
         if since:
             filters.append(f"RowKey ge '{rollup_row_key(floor_to_bucket(since, granularity))}'")
@@ -625,17 +820,22 @@ def fetch_rollup_history(device_ip: Optional[str], timescale: str, start_timesta
         query = " and ".join(filters) if filters else ""
 
         try:
+            q_start = datetime.datetime.now(datetime.timezone.utc)
             entities = list(client.query_entities(
                 query_filter=query,
                 select=["PartitionKey", "RowKey", "timestamp", "deviceIp", "count", "humidity", "temperature", "battery", "moisture", "ph", "light", "granularity", "lastUpdated"]
             ))
+            q_elapsed = (datetime.datetime.now(datetime.timezone.utc) - q_start).total_seconds()
+            logging.debug(f"Rollup query executed (granularity={granularity}) in {q_elapsed:.3f}s, returned {len(entities)} raw entities")
         except Exception as e:
             logging.error(f"Rollup query error for granularity {granularity}: {e}")
             continue
 
+        proc_start = datetime.datetime.now(datetime.timezone.utc)
         rows = sorted([dict(e) for e in entities], key=lambda x: str(x.get("timestamp", "")))
+        proc_elapsed = (datetime.datetime.now(datetime.timezone.utc) - proc_start).total_seconds()
         elapsed = (datetime.datetime.now(datetime.timezone.utc) - start_t).total_seconds()
-        logging.debug("Rollup query granularity=%s returned %s rows in %ss", granularity, len(rows), elapsed)
+        logging.debug("Rollup query granularity=%s returned %s rows (proc=%ss total=%ss)", granularity, len(rows), proc_elapsed, elapsed)
         if not rows:
             # Try next (coarser) granularity
             logging.debug("No rollup rows found for granularity %s, trying coarser if available", granularity)
@@ -643,8 +843,15 @@ def fetch_rollup_history(device_ip: Optional[str], timescale: str, start_timesta
 
         for row in rows:
             row["isAggregated"] = True
-        if limit:
-            return rows[-limit:]
+        target_points = get_history_target_points(timescale, len(rows))
+        effective_limit = limit if limit is not None else target_points
+        if timescale in ("1d", "1m", "1y", "all") and since and until and effective_limit:
+            # Fill missing buckets to keep chart point counts consistent without raw data.
+            rows = fill_time_buckets(rows, since, until, effective_limit)
+        elif effective_limit and len(rows) > effective_limit:
+            # Downsample evenly across the full window to avoid aliasing and preserve coverage.
+            rows = select_evenly_spaced_rows(rows, effective_limit)
+        _ROLLUP_CACHE[cache_key] = (time(), rows)
         return rows
 
     return []
@@ -727,14 +934,14 @@ def aggregate_history_rows(raw_history: list, timescale: str) -> list:
     return aggregated
 
 
-def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h", limit: Optional[int] = 100, raw: bool = False, start_timestamp: Optional[str] = None, end_timestamp: Optional[str] = None) -> list:
+def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h", limit: Optional[int] = 100, raw: bool = False, start_timestamp: Optional[str] = None, end_timestamp: Optional[str] = None, allow_all_devices: bool = False) -> list:
     client = get_table_client("SensorData")
     if not client:
         return []
 
     # When no device filter is provided, pin history reads to the latest active device
     # so table queries remain partition-targeted instead of cross-partition scans.
-    if not device_ip:
+    if not device_ip and not allow_all_devices:
         try:
             latest = fetch_latest_sensor_entry()
             resolved_ip = latest.get("deviceIp") if latest else None
@@ -745,8 +952,9 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
             logging.debug("Unable to resolve default history device_ip: %s", ex)
 
     filters = []
-    if device_ip:
+    if device_ip and not allow_all_devices:
         filters.append(f"PartitionKey eq '{device_ip.replace('.', '_')}'")
+    used_rowkey_filter = False
     
     # Time window filtering
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -776,13 +984,14 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
 
     if since:
         filters.append(f"RowKey ge '{int(since.timestamp()):010d}_0'")
+        used_rowkey_filter = True
 
     query = " and ".join(filters) if filters else ""
         
     # Long-range views should prefer the rollup table and avoid the raw SensorData scan.
     if not raw and get_rollup_granularity(timescale):
         t0 = datetime.datetime.now(datetime.timezone.utc)
-        rollup_history = fetch_rollup_history(device_ip, timescale, start_timestamp, end_timestamp, limit)
+        rollup_history = fetch_rollup_history(device_ip, timescale, start_timestamp, end_timestamp, limit, allow_all_devices=allow_all_devices)
         t_rollup = (datetime.datetime.now(datetime.timezone.utc) - t0).total_seconds()
         if rollup_history:
             logging.debug(f"Returning {len(rollup_history)} rollup data points for timescale={timescale} (rollup_fetch={t_rollup}s)")
@@ -814,17 +1023,74 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
         if r.get("timestamp"):
             r["timestamp"] = sanitize_timestamp(r.get("timestamp"))
 
-    # If custom end_timestamp provided, filter to that as well
-    if until:
-        raw_history = [r for r in raw_history if datetime.datetime.fromisoformat(r.get("timestamp", "").replace("Z", "+00:00")) <= until]
+    # Enforce time window based on timestamp field to avoid RowKey/time skew
+    if since or until:
+        filtered = []
+        for r in raw_history:
+            ts = parse_timestamp(r.get("timestamp"))
+            if not ts:
+                continue
+            if since and ts < since:
+                continue
+            if until and ts > until:
+                continue
+            filtered.append(r)
+        raw_history = filtered
+
+    # If raw 1y still starts too late, retry without RowKey filter (timestamp-only window)
+    if raw and timescale == "1y" and used_rowkey_filter and since and raw_history:
+        min_ts = None
+        for r in raw_history:
+            ts = parse_timestamp(r.get("timestamp"))
+            if ts and (min_ts is None or ts < min_ts):
+                min_ts = ts
+        if min_ts and min_ts > (since + datetime.timedelta(days=2)):
+            try:
+                fallback_filters = []
+                if device_ip:
+                    fallback_filters.append(f"PartitionKey eq '{device_ip.replace('.', '_')}'")
+                fallback_query = " and ".join(fallback_filters) if fallback_filters else ""
+                fallback_entities = list(client.query_entities(
+                    query_filter=fallback_query,
+                    select=["PartitionKey", "RowKey", "timestamp", "deviceIp", "humidity", "temperature", "battery", "moisture", "ph", "light", "Timestamp"],
+                ))
+                fallback_rows = sorted([dict(e) for e in fallback_entities], key=lambda x: str(x.get("timestamp", "")))
+                for r in fallback_rows:
+                    if not r.get("timestamp"):
+                        ts_obj = r.get("Timestamp")
+                        if isinstance(ts_obj, datetime.datetime):
+                            r["timestamp"] = ts_obj.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+                        elif ts_obj is not None:
+                            r["timestamp"] = str(ts_obj)
+                    if r.get("timestamp"):
+                        r["timestamp"] = sanitize_timestamp(r.get("timestamp"))
+
+                filtered = []
+                for r in fallback_rows:
+                    ts = parse_timestamp(r.get("timestamp"))
+                    if not ts:
+                        continue
+                    if since and ts < since:
+                        continue
+                    if until and ts > until:
+                        continue
+                    filtered.append(r)
+                raw_history = filtered
+            except Exception as ex:
+                logging.warning("Raw 1y fallback query failed: %s", ex)
 
     # If raw flag is set, return unaggregated data (for custom date-range queries)
     if raw:
         logging.debug(f"Returning {len(raw_history)} raw data points (no aggregation)")
-        return raw_history[-limit:] if limit else raw_history
+        return select_evenly_spaced_rows(raw_history, limit)
+
+    target_points = get_history_target_points(timescale)
+    if timescale == "1y" and since and until and target_points:
+        aggregated = downsample_rows_time_window(raw_history, since, until, target_points)
+        return select_evenly_spaced_rows(aggregated, limit)
 
     aggregated = aggregate_history_rows(raw_history, timescale)
-    return aggregated if not limit else aggregated[-limit:]
+    return select_evenly_spaced_rows(aggregated, limit)
 
 
 _control_commands: dict = {} # Keep commands in-memory for now as they are transient
@@ -921,12 +1187,13 @@ def get_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
             limit = None
         
         data = fetch_sensor_history(
-            device_ip=device_ip, 
-            timescale=timescale, 
+            device_ip=device_ip,
+            timescale=timescale,
             limit=limit,
             raw=raw,
             start_timestamp=start_timestamp,
-            end_timestamp=end_timestamp
+            end_timestamp=end_timestamp,
+            allow_all_devices=True,
         )
         return json_response({"count": len(data), "history": data, "timescale": timescale})
 
@@ -1007,6 +1274,38 @@ def rollup_reconcile_timer(timer: func.TimerRequest) -> None:
         "Rollup reconcile completed in %ss (window_hours=%s, processedRows=%s, writtenRollups=%s, error=%s)",
         round(elapsed, 2),
         window_hours,
+        result.get("processedRows"),
+        result.get("writtenRollups"),
+        result.get("error"),
+    )
+
+
+@app.function_name("rollupDailyBackfillTimer")
+@app.schedule(schedule="0 5 2 * * *", arg_name="timer", run_on_startup=False, use_monitor=True)
+def rollup_daily_backfill_timer(timer: func.TimerRequest) -> None:
+    enabled = str(os.getenv("ENABLE_ROLLUP_DAILY_BACKFILL", "true")).strip().lower() in ("1", "true", "yes")
+    if not enabled:
+        logging.info("Daily rollup backfill is disabled via ENABLE_ROLLUP_DAILY_BACKFILL")
+        return
+
+    try:
+        window_days = int(os.getenv("ROLLUP_DAILY_BACKFILL_DAYS", "400"))
+    except Exception:
+        window_days = 400
+
+    try:
+        max_rows = int(os.getenv("ROLLUP_DAILY_BACKFILL_MAX_ROWS", "200000"))
+    except Exception:
+        max_rows = 200000
+
+    window_hours = max(1, window_days * 24)
+    start = datetime.datetime.now(datetime.timezone.utc)
+    result = rebuild_rollups_for_window(window_hours=window_hours, max_rows=max_rows)
+    elapsed = (datetime.datetime.now(datetime.timezone.utc) - start).total_seconds()
+    logging.info(
+        "Daily rollup backfill completed in %ss (window_days=%s, processedRows=%s, writtenRollups=%s, error=%s)",
+        round(elapsed, 2),
+        window_days,
         result.get("processedRows"),
         result.get("writtenRollups"),
         result.get("error"),

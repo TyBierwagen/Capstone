@@ -6,7 +6,13 @@
     "STORAGE_CONNECTION_STRING": "<Azure Storage connection string>",
     "ALERT_RECIPIENT": "tybierwagen@tamu.edu",
     "ACS_SENDER_EMAIL": "DoNotReply@tybierwagen.com",
-    "ACS_CONNECTION_STRING": "<Azure Communication Services connection string>"
+    "ACS_CONNECTION_STRING": "<Azure Communication Services connection string>",
+    "ENABLE_ROLLUP_RECONCILE": "true",
+    "ROLLUP_RECONCILE_WINDOW_HOURS": "48",
+    "ROLLUP_RECONCILE_MAX_ROWS": "50000",
+    "ENABLE_ROLLUP_DAILY_BACKFILL": "true",
+    "ROLLUP_DAILY_BACKFILL_DAYS": "400",
+    "ROLLUP_DAILY_BACKFILL_MAX_ROWS": "200000"
   }, 
 
   "Host": {
