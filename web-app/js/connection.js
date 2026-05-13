@@ -125,23 +125,8 @@ export async function fetchCustomDateRange(startDate, endDate) {
   try {
     const baseUrl = getApiBaseUrl();
     const params = new URLSearchParams();
-    // If no explicit device filter, resolve the latest active device first
-    if (state.deviceIp) {
-      params.append('deviceIp', state.deviceIp);
-    } else {
-      try {
-        const apiKey = localStorage.getItem('functionKey');
-        const fetchOptions = { method: 'GET', mode: 'cors', cache: 'no-store' };
-        const latestResp = await fetch(`${baseUrl.replace(/\/$/, '')}/sensor-data${apiKey ? `?code=${apiKey}` : ''}`, fetchOptions);
-        if (latestResp.ok) {
-          const latest = await latestResp.json();
-          const resolved = latest?.deviceIp || latest?.device?.deviceIp;
-          if (resolved) params.append('deviceIp', resolved);
-        }
-      } catch (e) {
-        console.debug('Failed to resolve latest device for custom range', e);
-      }
-    }
+    // Do not append `deviceIp` for custom-range/history requests so charts show
+    // data across all devices. Live/latest fetches still use `state.deviceIp`.
     const apiKey = localStorage.getItem('functionKey');
     const fetchOptions = { method: 'GET', mode: 'cors', cache: 'no-store' };
     if (apiKey) params.append('code', apiKey);
@@ -258,9 +243,9 @@ export async function refreshData(showLoading = false) {
     updateDeviceInfo(latestData);
     if (shouldShowLive) setLoading('liveSensorsCard', false);
 
-    const effectiveDeviceIp = state.deviceIp || latestData?.deviceIp || state.latestData?.deviceIp;
+    // For historical/chart queries, do not filter by IP — always request aggregated
+    // history across partitions. Use a fresh params object for history fetches.
     const historyParams = new URLSearchParams();
-    if (effectiveDeviceIp) historyParams.append('deviceIp', effectiveDeviceIp);
     if (apiKey) historyParams.append('code', apiKey);
 
     let selectedHistoryPromise;
