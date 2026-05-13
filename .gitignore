@@ -18,7 +18,7 @@ functions/local.settings.json
 .env.local
 
 # IDE files
-.vscode/
+
 .idea/
 *.swp
 *.swo
