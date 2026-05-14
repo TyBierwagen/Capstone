@@ -63,9 +63,12 @@ def parse_timestamp_utc(value):
     try:
         text = str(value).strip()
         # Collapse duplicate UTC offsets and optional trailing Z into a single +00:00
-        text = re.sub(r'(\+00:00)+(?:Z)?$', '+00:00', text)
+        text = re.sub(r'([+-]\d{2}:\d{2})+(?:Z)?$', r'\1', text)
         if text.endswith('Z'):
             text = text[:-1] + '+00:00'
+        # If we still have duplicated offset segments after the first replacement,
+        # collapse them again more broadly.
+        text = re.sub(r'([+-]\d{2}:\d{2}){2,}$', r'\1', text)
         parsed = datetime.datetime.fromisoformat(text)
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=datetime.timezone.utc)
@@ -981,43 +984,40 @@ def check_device_health(myTimer: func.TimerRequest) -> None:
             if not last_seen_str:
                 continue
             
-            try:
-                last_seen = parse_timestamp_utc(last_seen_str)
-                if not last_seen:
-                    raise ValueError("Unable to parse lastSeen")
-                diff = (now - last_seen).total_seconds()
+            last_seen = parse_timestamp_utc(last_seen_str)
+            if not last_seen:
+                logging.warning("Skipping health check for device %s due to malformed lastSeen: %r", device.get("RowKey"), last_seen_str)
+                continue
+            diff = (now - last_seen).total_seconds()
+            
+            # If offline for more than 10 minutes (600 seconds)
+            if diff > 600:
+                # Check if we've already sent an alert in the last 24 hours to avoid spamming
+                last_alert = device.get("lastAlertSentAt")
+                should_alert = True
+                if last_alert:
+                    last_alert_dt = parse_timestamp_utc(last_alert)
+                    if not last_alert_dt:
+                        logging.warning("Ignoring malformed lastAlertSentAt for device %s: %r", device.get("RowKey"), last_alert)
+                    elif (now - last_alert_dt).total_seconds() < 86400: # 24 hours
+                        should_alert = False
                 
-                # If offline for more than 10 minutes (600 seconds)
-                if diff > 600:
-                    # Check if we've already sent an alert in the last 24 hours to avoid spamming
-                    last_alert = device.get("lastAlertSentAt")
-                    should_alert = True
-                    if last_alert:
-                        last_alert_dt = parse_timestamp_utc(last_alert)
-                        if not last_alert_dt:
-                            raise ValueError("Unable to parse lastAlertSentAt")
-                        if (now - last_alert_dt).total_seconds() < 86400: # 24 hours
-                            should_alert = False
+                if should_alert:
+                    device_id = str(device.get("RowKey") or "unknown")
+                    logging.warning("Device %s is offline (Last seen: %s). Sending alert.", device_id, last_seen_str)
+                    send_alert_email(device_id, last_seen_str)
                     
-                    if should_alert:
-                        device_id = str(device.get("RowKey") or "unknown")
-                        logging.warning("Device %s is offline (Last seen: %s). Sending alert.", device_id, last_seen_str)
-                        send_alert_email(device_id, last_seen_str)
-                        
-                        # Update device with alert timestamp
-                        device["lastAlertSentAt"] = now_iso()
-                        client.update_entity(mode=UpdateMode.REPLACE, entity=device)
-                    else:
-                        logging.info("Device %s is offline but alert was already sent recently.", device.get("RowKey"))
+                    # Update device with alert timestamp
+                    device["lastAlertSentAt"] = now_iso()
+                    client.update_entity(mode=UpdateMode.REPLACE, entity=device)
                 else:
-                    # Device is back online, reset alert timestamp if needed
-                    if device.get("lastAlertSentAt"):
-                        logging.info("Device %s is back online. Resetting alert status.", device.get("RowKey"))
-                        device["lastAlertSentAt"] = None
-                        client.update_entity(mode=UpdateMode.REPLACE, entity=device)
-                        
-            except Exception as ex:
-                logging.error("Error checking health for device %s: %s", device.get("RowKey"), ex)
+                    logging.info("Device %s is offline but alert was already sent recently.", device.get("RowKey"))
+            else:
+                # Device is back online, reset alert timestamp if needed
+                if device.get("lastAlertSentAt"):
+                    logging.info("Device %s is back online. Resetting alert status.", device.get("RowKey"))
+                    device["lastAlertSentAt"] = None
+                    client.update_entity(mode=UpdateMode.REPLACE, entity=device)
                 
     except Exception as e:
         logging.error("Health check query failed: %s", e)
