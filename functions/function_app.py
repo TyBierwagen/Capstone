@@ -62,8 +62,8 @@ def parse_timestamp_utc(value):
 
     try:
         text = str(value).strip()
-        text = re.sub(r'(\+00:00)+Z$', '+00:00', text)
         text = re.sub(r'(\+00:00){2,}$', '+00:00', text)
+        text = re.sub(r'(\+00:00)+Z$', '+00:00', text)
         if text.endswith('Z'):
             text = text[:-1] + '+00:00'
         parsed = datetime.datetime.fromisoformat(text)
@@ -201,10 +201,7 @@ def store_sensor_entry(payload: dict) -> dict:
                 if re.match(r'^\d{10}$', s):
                     parsed_dt = datetime.datetime.fromtimestamp(int(s), datetime.timezone.utc)
                 else:
-                    try:
-                        parsed_dt = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
-                    except Exception:
-                        parsed_dt = None
+                    parsed_dt = parse_timestamp_utc(s)
         except Exception:
             parsed_dt = None
 
@@ -354,13 +351,13 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
     # If custom start/end timestamps provided, use them
     if start_timestamp:
         try:
-            since = datetime.datetime.fromisoformat(start_timestamp.replace("Z", "+00:00"))
+            since = parse_timestamp_utc(start_timestamp)
         except Exception:
             logging.warning(f"Failed to parse start_timestamp: {start_timestamp}")
     
     if end_timestamp:
         try:
-            until = datetime.datetime.fromisoformat(end_timestamp.replace("Z", "+00:00"))
+            until = parse_timestamp_utc(end_timestamp)
         except Exception:
             logging.warning(f"Failed to parse end_timestamp: {end_timestamp}")
     
