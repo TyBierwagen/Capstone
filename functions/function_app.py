@@ -211,9 +211,17 @@ def store_sensor_entry(payload: dict) -> dict:
         now = ts_dt
     else:
         now = datetime.datetime.now(datetime.timezone.utc)
-        timestamp = now.replace(microsecond=0).isoformat() + "Z"
+        timestamp = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     device_ip = payload.get("deviceIp", "unknown")
+    battery_value = payload.get("battery")
+    if battery_value is None:
+        # Accept common alternate names used by older firmware payloads.
+        battery_value = payload.get("batteryVoltage")
+    if battery_value is None:
+        battery_value = payload.get("battery_v")
+    if battery_value is None:
+        battery_value = payload.get("voltage")
     
     entry = {
         "PartitionKey": device_ip.replace(".", "_"),
@@ -229,7 +237,7 @@ def store_sensor_entry(payload: dict) -> dict:
         "hour": now.hour,
         "humidity": payload.get("humidity"),
         "temperature": payload.get("temperature"),
-        "battery": payload.get("battery"),
+        "battery": battery_value,
         "moisture": payload.get("moisture"),
         "ph": payload.get("ph"),
         "light": payload.get("light"),
@@ -310,6 +318,9 @@ def fetch_latest_sensor_entry(device_ip: Optional[str] = None, device_id: Option
     # Normalize timestamp string so client JS can parse it reliably
     if latest.get("timestamp"):
         latest["timestamp"] = sanitize_timestamp(latest.get("timestamp"))
+
+    # Keep response schema stable for frontend rendering.
+    latest.setdefault("battery", None)
 
     # Get device info
     device_client = get_table_client("Devices")
@@ -519,6 +530,13 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
         # Normalize timestamp formats to be parseable by the browser
         if r.get("timestamp"):
             r["timestamp"] = sanitize_timestamp(r.get("timestamp"))
+        # Stabilize keys so frontend always sees the same payload shape.
+        r.setdefault("humidity", None)
+        r.setdefault("temperature", None)
+        r.setdefault("battery", None)
+        r.setdefault("moisture", None)
+        r.setdefault("ph", None)
+        r.setdefault("light", None)
 
     # If custom end_timestamp provided, filter to that as well
     if until:
