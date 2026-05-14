@@ -35,7 +35,43 @@ def get_table_client(table_name: str):
     return table_service.get_table_client(table_name)
 
 def now_iso() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat() + "Z"
+    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def parse_timestamp_utc(value):
+    """Parse timestamp values into an aware UTC datetime."""
+    if not value:
+        return None
+
+    if isinstance(value, datetime.datetime):
+        parsed = value
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+        return parsed.astimezone(datetime.timezone.utc)
+
+    if isinstance(value, (int, float)):
+        try:
+            numeric = float(value)
+            if numeric > 1e12:
+                return datetime.datetime.fromtimestamp(numeric / 1000.0, datetime.timezone.utc)
+            if numeric > 1e9:
+                return datetime.datetime.fromtimestamp(numeric, datetime.timezone.utc)
+        except Exception:
+            return None
+        return None
+
+    try:
+        text = str(value).strip()
+        text = re.sub(r'(\+00:00)+Z$', '+00:00', text)
+        text = re.sub(r'(\+00:00){2,}$', '+00:00', text)
+        if text.endswith('Z'):
+            text = text[:-1] + '+00:00'
+        parsed = datetime.datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+        return parsed.astimezone(datetime.timezone.utc)
+    except Exception:
+        return None
 
 
 def format_timedelta(seconds: float) -> str:
@@ -64,43 +100,10 @@ def format_timedelta(seconds: float) -> str:
 def sanitize_timestamp(value):
     """Normalize timestamp inputs to an ISO string with a trailing 'Z'.
     Accepts datetime, ISO strings, and epoch seconds or milliseconds (int/float)."""
-    if not value:
-        return None
-    # Numeric epochs (seconds or milliseconds)
-    if isinstance(value, (int, float)):
-        try:
-            v = float(value)
-            if v > 1e12:
-                dt = datetime.datetime.fromtimestamp(v / 1000.0, datetime.timezone.utc)
-            elif v > 1e9:
-                dt = datetime.datetime.fromtimestamp(v, datetime.timezone.utc)
-            else:
-                return None
-            return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        except Exception:
-            return None
-    if isinstance(value, datetime.datetime):
-        return value.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    if isinstance(value, str):
-        v = value.strip()
-        v = v.replace("+00:00Z", "Z").replace("+00:00", "Z")
-        # If it's a pure 10-digit epoch in seconds, convert
-        if re.match(r'^\d{10}$', v):
-            try:
-                dt = datetime.datetime.fromtimestamp(int(v), datetime.timezone.utc)
-                return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-            except Exception:
-                pass
-        try:
-            parsed = datetime.datetime.fromisoformat(v.replace("Z", "+00:00"))
-            return parsed.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        except Exception:
-            return v
-    try:
-        parsed = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    parsed = parse_timestamp_utc(value)
+    if parsed:
         return parsed.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    except Exception:
-        return str(value)
+    return None if not value else str(value)
 
 
 def json_response(payload: dict, status: int = 200) -> func.HttpResponse:
@@ -522,7 +525,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
 
     # If custom end_timestamp provided, filter to that as well
     if until:
-        raw_history = [r for r in raw_history if datetime.datetime.fromisoformat(r.get("timestamp", "").replace("Z", "+00:00")) <= until]
+        raw_history = [r for r in raw_history if (parse_timestamp_utc(r.get("timestamp")) or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)) <= until]
 
     # If raw flag is set, return unaggregated data (for custom date-range queries)
     if raw:
@@ -645,12 +648,11 @@ def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.function_name("getSensorData")
 @app.route(route="sensor-data", methods=["GET"], auth_level=func.AuthLevel.FUNCTION)
-@safe_function
 def get_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
     device_ip = req.params.get("deviceIp")
     device_id = req.params.get("deviceId")
     is_history = parse_bool(req.params.get("history"), False)
-
+    
     if is_history:
         timescale = req.params.get("timescale", "1h")
         raw = parse_bool(req.params.get("raw"), False)
@@ -817,7 +819,9 @@ def send_alert_email(device_id: str, last_seen: str, subject_override: Optional[
 
     # Parse last_seen into a timezone-aware datetime (assume input is iso/z)
     try:
-        last_seen_dt_utc = datetime.datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
+        last_seen_dt_utc = parse_timestamp_utc(last_seen)
+        if not last_seen_dt_utc:
+            raise ValueError("Unable to parse last_seen")
     except Exception:
         # Fallback: treat as current time minus 0 seconds
         last_seen_dt_utc = datetime.datetime.now(datetime.timezone.utc)
@@ -961,7 +965,9 @@ def check_device_health(myTimer: func.TimerRequest) -> None:
                 continue
             
             try:
-                last_seen = datetime.datetime.fromisoformat(last_seen_str.replace("Z", "+00:00"))
+                last_seen = parse_timestamp_utc(last_seen_str)
+                if not last_seen:
+                    raise ValueError("Unable to parse lastSeen")
                 diff = (now - last_seen).total_seconds()
                 
                 # If offline for more than 10 minutes (600 seconds)
@@ -970,7 +976,9 @@ def check_device_health(myTimer: func.TimerRequest) -> None:
                     last_alert = device.get("lastAlertSentAt")
                     should_alert = True
                     if last_alert:
-                        last_alert_dt = datetime.datetime.fromisoformat(last_alert.replace("Z", "+00:00"))
+                        last_alert_dt = parse_timestamp_utc(last_alert)
+                        if not last_alert_dt:
+                            raise ValueError("Unable to parse lastAlertSentAt")
                         if (now - last_alert_dt).total_seconds() < 86400: # 24 hours
                             should_alert = False
                     
