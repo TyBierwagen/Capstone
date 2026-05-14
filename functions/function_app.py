@@ -427,7 +427,41 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
             })
 
         rows_sorted = sorted([r for r in rows if r.get('timestamp')], key=lambda x: str(x.get('timestamp')))
-        return rows_sorted[-limit:] if limit else rows_sorted
+
+        # Keep rollup responses consistent with raw-data aggregation by
+        # returning approximately `target_points` data points. This ensures
+        # backfilled rollups and on-the-fly aggregation produce similar
+        # point counts for the frontend charting logic.
+        target_points = 60
+        # If there are few rollup rows, just return what's available (respect limit)
+        if len(rows_sorted) <= target_points:
+            return rows_sorted[-limit:] if limit else rows_sorted
+
+        # Aggregate rollup rows into ~target_points buckets
+        chunk_size = max(1, len(rows_sorted) // target_points)
+        aggregated = []
+        for i in range(0, len(rows_sorted), chunk_size):
+            chunk = rows_sorted[i:i + chunk_size]
+            if not chunk:
+                continue
+
+            def avg(key):
+                vals = [c[key] for c in chunk if c.get(key) is not None and isinstance(c[key], (int, float))]
+                return round(sum(vals) / len(vals), 2) if vals else None
+
+            aggregated.append({
+                'timestamp': chunk[-1]['timestamp'],
+                'moisture': avg('moisture'),
+                'temperature': avg('temperature'),
+                'humidity': avg('humidity'),
+                'battery': avg('battery'),
+                'ph': avg('ph'),
+                'light': avg('light'),
+                'deviceIp': chunk[0].get('deviceIp'),
+                'isAggregated': True,
+            })
+
+        return aggregated[:target_points] if not limit else aggregated[-limit:]
 
     # Use precomputed rollups first for the long-range views so we avoid
     # scanning raw SensorData when the answer is already materialized.
@@ -592,6 +626,15 @@ def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
         return json_response({"error": "Invalid JSON payload"}, status=400)
 
     device_ip = payload.get("deviceIp")
+
+    battery_value = payload.get("battery")
+    logging.info(
+        "Sensor payload received for %s: keys=%s battery_present=%s battery_value=%s",
+        device_ip,
+        sorted(payload.keys()),
+        "battery" in payload,
+        battery_value,
+    )
 
     if not device_ip:
         return json_response({"error": "Device IP is required"}, status=400)
