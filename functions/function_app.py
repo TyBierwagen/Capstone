@@ -70,7 +70,8 @@ def parse_timestamp_utc(value):
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=datetime.timezone.utc)
         return parsed.astimezone(datetime.timezone.utc)
-    except Exception:
+    except Exception as ex:
+        logging.warning('parse_timestamp_utc failed for value=%r: %s', value, ex)
         return None
 
 
