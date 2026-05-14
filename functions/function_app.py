@@ -259,6 +259,8 @@ def store_sensor_entry(payload: dict) -> dict:
         "ph": payload.get("ph"),
         "light": payload.get("light"),
     }
+
+    logging.info("Sensor entry to store: %s", json.dumps(entry, default=str))
     
     client = get_table_client("SensorData")
     if client:
