@@ -66,12 +66,11 @@ def parse_timestamp_utc(value):
         if text.endswith('Z'):
             text = text[:-1] + '+00:00'
 
-        # Collapse repeated timezone offsets like '+00:00+00:00' to a single '+00:00'.
-        while True:
-            dup = re.search(r'([+-]\d{2}:\d{2})([+-]\d{2}:\d{2})$', text)
-            if not dup:
-                break
-            text = text[:dup.start(1)] + dup.group(2)
+        # Collapse any repeated timezone offset suffixes into a single value.
+        text = re.sub(r'((?:[+-]\d{2}:\d{2})+)$', lambda m: m.group(1)[-6:], text)
+
+        if text != str(value).strip():
+            logging.debug("parse_timestamp_utc normalized %r -> %r", value, text)
 
         parsed = datetime.datetime.fromisoformat(text)
         if parsed.tzinfo is None:
