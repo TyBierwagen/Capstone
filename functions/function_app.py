@@ -229,6 +229,16 @@ def store_sensor_entry(payload: dict) -> dict:
         battery_value = payload.get("battery_v")
     if battery_value is None:
         battery_value = payload.get("voltage")
+
+    logging.info(
+        "Resolved battery fields for %s: battery=%s batteryVoltage=%s battery_v=%s voltage=%s -> battery_value=%s",
+        device_ip,
+        payload.get("battery"),
+        payload.get("batteryVoltage"),
+        payload.get("battery_v"),
+        payload.get("voltage"),
+        battery_value,
+    )
     
     entry = {
         "PartitionKey": device_ip.replace(".", "_"),
@@ -651,6 +661,8 @@ def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
         return json_response({"error": "Invalid JSON payload"}, status=400)
 
     device_ip = payload.get("deviceIp")
+
+    logging.info("Incoming sensor payload: %s", json.dumps(payload, default=str))
 
     battery_value = payload.get("battery")
     logging.info(
