@@ -62,13 +62,15 @@ def parse_timestamp_utc(value):
 
     try:
         text = str(value).strip()
-        # Collapse duplicate UTC offsets and optional trailing Z into a single +00:00
-        text = re.sub(r'([+-]\d{2}:\d{2})+(?:Z)?$', r'\1', text)
+        # Normalize common timezone formats and duplicate offsets.
+        # Examples: '2026-05-14T18:09:00Z', '2026-05-14T18:09:00+00:00Z',
+        # '2026-05-14T18:09:00+00:00+00:00'.
         if text.endswith('Z'):
-            text = text[:-1] + '+00:00'
-        # If we still have duplicated offset segments after the first replacement,
-        # collapse them again more broadly.
-        text = re.sub(r'([+-]\d{2}:\d{2}){2,}$', r'\1', text)
+            if re.search(r'[+-]\d{2}:\d{2}Z$', text):
+                text = re.sub(r'([+-]\d{2}:\d{2})Z$', r'\1', text)
+            else:
+                text = text[:-1] + '+00:00'
+        text = re.sub(r'([+-]\d{2}:\d{2})(?:\1)+Z?$', r'\1', text)
         parsed = datetime.datetime.fromisoformat(text)
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=datetime.timezone.utc)
