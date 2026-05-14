@@ -62,8 +62,8 @@ def parse_timestamp_utc(value):
 
     try:
         text = str(value).strip()
-        text = re.sub(r'(\+00:00){2,}$', '+00:00', text)
-        text = re.sub(r'(\+00:00)+Z$', '+00:00', text)
+        # Collapse duplicate UTC offsets and optional trailing Z into a single +00:00
+        text = re.sub(r'(\+00:00)+(?:Z)?$', '+00:00', text)
         if text.endswith('Z'):
             text = text[:-1] + '+00:00'
         parsed = datetime.datetime.fromisoformat(text)
@@ -71,7 +71,7 @@ def parse_timestamp_utc(value):
             parsed = parsed.replace(tzinfo=datetime.timezone.utc)
         return parsed.astimezone(datetime.timezone.utc)
     except Exception as ex:
-        logging.warning('parse_timestamp_utc failed for value=%r: %s', value, ex)
+        logging.warning('parse_timestamp_utc failed for value=%r normalized=%r: %s', value, text if 'text' in locals() else value, ex)
         return None
 
 
@@ -648,11 +648,12 @@ def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
 
     battery_value = payload.get("battery")
     logging.info(
-        "Sensor payload received for %s: keys=%s battery_present=%s battery_value=%s",
+        "Sensor payload received for %s: keys=%s battery_present=%s battery_value=%s payload=%s",
         device_ip,
         sorted(payload.keys()),
         "battery" in payload,
         battery_value,
+        json.dumps(payload, default=str),
     )
 
     if not device_ip:
