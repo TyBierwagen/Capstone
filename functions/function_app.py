@@ -221,14 +221,28 @@ def store_sensor_entry(payload: dict) -> dict:
         timestamp = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     device_ip = payload.get("deviceIp", "unknown")
+
+    def is_missing_battery(value):
+        return value is None or (isinstance(value, str) and not value.strip())
+
     battery_value = payload.get("battery")
-    if battery_value is None:
-        # Accept common alternate names used by older firmware payloads.
+    if is_missing_battery(battery_value):
+        # Fix regression from older commit 1cee954: support alternate battery field
+        # names used by older firmware payloads.
         battery_value = payload.get("batteryVoltage")
-    if battery_value is None:
+
+    if is_missing_battery(battery_value):
         battery_value = payload.get("battery_v")
-    if battery_value is None:
+
+    if is_missing_battery(battery_value):
         battery_value = payload.get("voltage")
+
+    if is_missing_battery(battery_value):
+        battery_value = None
+        logging.warning(
+            "No battery value found in payload; keys=%s",
+            sorted(payload.keys()),
+        )
 
     logging.info(
         "Resolved battery fields for %s: battery=%s batteryVoltage=%s battery_v=%s voltage=%s -> battery_value=%s",
