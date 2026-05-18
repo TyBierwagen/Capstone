@@ -393,18 +393,35 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
     until = None
     
     # If custom start/end timestamps provided, use them
+    invalid_custom_range = False
     if start_timestamp:
-        try:
-            since = parse_timestamp_utc(start_timestamp)
-        except Exception:
-            logging.warning(f"Failed to parse start_timestamp: {start_timestamp}")
-    
+        since = parse_timestamp_utc(start_timestamp)
+        if since is None:
+            invalid_custom_range = True
+            logging.warning("Failed to parse start_timestamp: %s", start_timestamp)
+
     if end_timestamp:
-        try:
-            until = parse_timestamp_utc(end_timestamp)
-        except Exception:
-            logging.warning(f"Failed to parse end_timestamp: {end_timestamp}")
-    
+        until = parse_timestamp_utc(end_timestamp)
+        if until is None:
+            invalid_custom_range = True
+            logging.warning("Failed to parse end_timestamp: %s", end_timestamp)
+
+    if invalid_custom_range:
+        logging.warning(
+            "Ignoring invalid custom range request: start_timestamp=%s end_timestamp=%s",
+            start_timestamp,
+            end_timestamp,
+        )
+        return []
+
+    if since and until and since >= until:
+        logging.warning(
+            "Ignored invalid custom time range: start_timestamp=%s end_timestamp=%s",
+            start_timestamp,
+            end_timestamp,
+        )
+        return []
+
     # If no custom timestamps, use timescale-based filtering
     if not since:
         if timescale == "1h": since = now - datetime.timedelta(hours=1)

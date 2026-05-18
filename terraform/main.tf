@@ -34,9 +34,9 @@ resource "azurerm_storage_account" "main" {
   location                 = azurerm_resource_group.main.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
-  allow_nested_items_to_be_public = false
-  min_tls_version          = "TLS1_2"
-  
+  allow_nested_items_to_be_public  = false
+  min_tls_version                  = "TLS1_2"
+  public_network_access_enabled    = false
   tags = var.tags
 }
 
@@ -257,6 +257,7 @@ resource "azurerm_key_vault" "main" {
   location                   = azurerm_resource_group.main.location
   tenant_id                  = data.azurerm_client_config.current.tenant_id
   sku_name                   = "standard"
+  public_network_access_enabled = false
 }
 
 resource "azurerm_key_vault_access_policy" "terraform_user" {
