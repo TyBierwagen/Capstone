@@ -45,6 +45,23 @@ async function fetchHistoryByTimescale(baseUrl, params, fetchOptions, timescale,
   return rows;
 }
 
+function isValidDate(value) {
+  return value instanceof Date && !Number.isNaN(value.getTime());
+}
+
+function sanitizeCustomDateRange(startDate, endDate) {
+  if (!isValidDate(startDate) || !isValidDate(endDate)) {
+    throw new Error('Invalid start or end date');
+  }
+  if (startDate >= endDate) {
+    throw new Error('Start date must be before end date');
+  }
+  return {
+    start: new Date(startDate.getTime()),
+    end: new Date(endDate.getTime()),
+  };
+}
+
 export async function fetchCustomDateRange(startDate, endDate) {
   if (!state.isConnected) { 
     showAlert('Connect to sensor database to fetch custom date range', 'error'); 
@@ -60,14 +77,25 @@ export async function fetchCustomDateRange(startDate, endDate) {
     const fetchOptions = { method: 'GET', mode: 'cors', cache: 'no-store' };
     if (apiKey) params.append('code', apiKey);
 
+    let validatedStart = startDate;
+    let validatedEnd = endDate;
+    try {
+      const range = sanitizeCustomDateRange(startDate, endDate);
+      validatedStart = range.start;
+      validatedEnd = range.end;
+    } catch (validationError) {
+      showAlert(validationError.message, 'error');
+      return null;
+    }
+
     // Fetch raw data for custom date range from API
     setLoading('trendsCard', true);
     setChartLoadingOverlay(true);
     params.append('history', 'true');
     params.append('timescale', 'all');
     params.append('raw', 'true'); // Request unaggregated data
-    params.append('start', startDate.toISOString()); // ISO format with Z
-    params.append('end', endDate.toISOString());
+    params.append('start', validatedStart.toISOString()); // ISO format with Z
+    params.append('end', validatedEnd.toISOString());
     
     const base = getApiBaseUrl();
     const response = await fetch(`${base.replace(/\/$/, '')}/sensor-data?${params.toString()}`, fetchOptions);
