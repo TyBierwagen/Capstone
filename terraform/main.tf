@@ -13,7 +13,7 @@ provider "azurerm" {
     resource_group {
       prevent_deletion_if_contains_resources = false
     }
- }
+  }
   skip_provider_registration = true
 }
 
@@ -29,13 +29,13 @@ resource "azurerm_resource_group" "main" {
 
 # Storage Account for web app static files and function app
 resource "azurerm_storage_account" "main" {
-  name                     = "${var.project_name}st${var.environment}"
-  resource_group_name      = azurerm_resource_group.main.name
-  location                 = azurerm_resource_group.main.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
+  name                            = "${var.project_name}st${var.environment}"
+  resource_group_name             = azurerm_resource_group.main.name
+  location                        = azurerm_resource_group.main.location
+  account_tier                    = "Standard"
+  account_replication_type        = "LRS"
   allow_nested_items_to_be_public = false
-  
+
   tags = var.tags
 }
 
@@ -64,7 +64,7 @@ resource "azurerm_service_plan" "main" {
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
   os_type             = "Linux"
-  sku_name            = "Y1"  # Consumption plan for serverless (Student-friendly)
+  sku_name            = "Y1" # Consumption plan for serverless (Student-friendly)
   tags                = var.tags
 }
 
@@ -76,7 +76,7 @@ resource "azurerm_api_management" "main" {
   publisher_name      = var.publisher_name
   publisher_email     = var.publisher_email
   sku_name            = "Consumption_0"
-  
+
   tags = var.tags
 }
 
@@ -89,7 +89,7 @@ resource "azurerm_api_management_api" "main" {
   display_name        = "Microcontroller API"
   path                = "api"
   protocols           = ["https"]
-  
+
   subscription_required = false
 }
 
@@ -238,7 +238,7 @@ resource "azurerm_application_insights" "main" {
   location            = azurerm_resource_group.main.location
   workspace_id        = azurerm_log_analytics_workspace.main.id
   application_type    = "web"
-  
+
   lifecycle {
     ignore_changes = [
       # Ignore daily_data_cap_in_gb as it can be modified by Azure policies
@@ -251,11 +251,71 @@ resource "azurerm_application_insights" "main" {
 
 # Key Vault for secrets management
 resource "azurerm_key_vault" "main" {
-  name                       = "${var.project_name}-kv-${var.environment}"
-  resource_group_name        = azurerm_resource_group.main.name
-  location                   = azurerm_resource_group.main.location
-  tenant_id                  = data.azurerm_client_config.current.tenant_id
-  sku_name                   = "standard"
+  name                = "${var.project_name}-kv-${var.environment}"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  tenant_id           = data.azurerm_client_config.current.tenant_id
+  sku_name            = "standard"
+
+  public_network_access_enabled = false
+
+  network_acls {
+    bypass         = "AzureServices"
+    default_action = "Deny"
+  }
+}
+
+resource "azurerm_virtual_network" "main" {
+  name                = "${var.project_name}-vnet-${var.environment}"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  address_space       = ["10.0.0.0/16"]
+
+  tags = var.tags
+}
+
+resource "azurerm_subnet" "main" {
+  name                 = "private-endpoint-subnet"
+  resource_group_name  = azurerm_resource_group.main.name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = ["10.0.1.0/24"]
+
+  enforce_private_link_endpoint_network_policies = false
+}
+
+resource "azurerm_private_dns_zone" "key_vault" {
+  name                = "privatelink.vaultcore.azure.net"
+  resource_group_name = azurerm_resource_group.main.name
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "key_vault" {
+  name                  = "${var.project_name}-kv-pdns-link"
+  resource_group_name   = azurerm_resource_group.main.name
+  private_dns_zone_name = azurerm_private_dns_zone.key_vault.name
+  virtual_network_id    = azurerm_virtual_network.main.id
+  registration_enabled  = false
+}
+
+resource "azurerm_private_endpoint" "key_vault" {
+  name                = "${var.project_name}-kv-pe-${var.environment}"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  subnet_id           = azurerm_subnet.main.id
+
+  private_service_connection {
+    name                           = "${var.project_name}-kv-psc"
+    private_connection_resource_id = azurerm_key_vault.main.id
+    subresource_names              = ["vault"]
+    is_manual_connection           = false
+  }
+}
+
+resource "azurerm_private_dns_zone_group" "key_vault" {
+  name                = "${var.project_name}-kv-dns-group"
+  private_endpoint_id = azurerm_private_endpoint.key_vault.id
+  private_dns_zone_ids = [
+    azurerm_private_dns_zone.key_vault.id,
+  ]
 }
 
 resource "azurerm_key_vault_access_policy" "terraform_user" {
@@ -305,7 +365,7 @@ resource "azurerm_key_vault_secret" "acs_connection" {
   key_vault_id = azurerm_key_vault.main.id
 
   lifecycle {
-    ignore_changes = [ value ]
+    ignore_changes = [value]
   }
 }
 
@@ -332,30 +392,30 @@ resource "azurerm_linux_function_app" "main" {
   }
 
   app_settings = {
-    FUNCTIONS_WORKER_RUNTIME       = "python"
-    FUNCTIONS_EXTENSION_VERSION    = "~4"
-    WEBSITE_RUN_FROM_PACKAGE       = "1"
-    AzureWebJobsStorage            = azurerm_storage_account.main.primary_connection_string
-    STORAGE_CONNECTION_STRING      = azurerm_storage_account.main.primary_connection_string
+    FUNCTIONS_WORKER_RUNTIME                 = "python"
+    FUNCTIONS_EXTENSION_VERSION              = "~4"
+    WEBSITE_RUN_FROM_PACKAGE                 = "1"
+    AzureWebJobsStorage                      = azurerm_storage_account.main.primary_connection_string
+    STORAGE_CONNECTION_STRING                = azurerm_storage_account.main.primary_connection_string
     WEBSITE_CONTENTAZUREFILECONNECTIONSTRING = azurerm_storage_account.main.primary_connection_string
     WEBSITE_CONTENTSHARE                     = "${var.project_name}-func-share"
-    APPINSIGHTS_INSTRUMENTATIONKEY = azurerm_application_insights.main.instrumentation_key
-    APPLICATIONINSIGHTS_CONNECTION_STRING = azurerm_application_insights.main.connection_string
-    ENABLE_ORYX_BUILD              = "true"
-    SCM_DO_BUILD_DURING_DEPLOYMENT = "true"
+    APPINSIGHTS_INSTRUMENTATIONKEY           = azurerm_application_insights.main.instrumentation_key
+    APPLICATIONINSIGHTS_CONNECTION_STRING    = azurerm_application_insights.main.connection_string
+    ENABLE_ORYX_BUILD                        = "true"
+    SCM_DO_BUILD_DURING_DEPLOYMENT           = "true"
     # Azure Communication Services connection string is stored in Key Vault for security
     # It is populated from the Key Vault secret if provided.
     ACS_CONNECTION_STRING = azurerm_key_vault_secret.acs_connection.value
     # Verified sender email for ACS (set this to a verified address after deploy if using email)
     ACS_SENDER_EMAIL = var.acs_sender_email
   }
-  
+
   lifecycle {
     ignore_changes = [
       app_settings["SQL_CONNECTION_STRING"]
     ]
   }
-  
+
   tags = var.tags
 }
 
