@@ -29,14 +29,14 @@ resource "azurerm_resource_group" "main" {
 
 # Storage Account for web app static files and function app
 resource "azurerm_storage_account" "main" {
-  name                            = "${var.project_name}st${var.environment}"
-  resource_group_name             = azurerm_resource_group.main.name
-  location                        = azurerm_resource_group.main.location
-  account_tier                    = "Standard"
-  account_replication_type        = "LRS"
-  allow_nested_items_to_be_public = false
-
-  tags = var.tags
+    name                            = "${var.project_name}st${var.environment}"
+    resource_group_name             = azurerm_resource_group.main.name
+    location                        = azurerm_resource_group.main.location
+    account_tier                    = "Standard"
+    account_replication_type        = "LRS"
+    allow_nested_items_to_be_public = false
+    min_tls_version                 = "TLS1_2"
+    public_network_access_enabled   = false
 }
 
 # Storage Container for function app
