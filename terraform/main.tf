@@ -34,9 +34,10 @@ resource "azurerm_storage_account" "main" {
     location                        = azurerm_resource_group.main.location
     account_tier                    = "Standard"
     account_replication_type        = "LRS"
+    account_kind                    = "StorageV2"
     allow_nested_items_to_be_public = false
     min_tls_version                 = "TLS1_2"
-    public_network_access_enabled   = false
+    public_network_access_enabled   = true
 }
 
 # Storage Container for function app
@@ -257,11 +258,11 @@ resource "azurerm_key_vault" "main" {
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
 
-  public_network_access_enabled = false
+  public_network_access_enabled = true
 
   network_acls {
     bypass         = "AzureServices"
-    default_action = "Deny"
+    default_action = "Allow"
   }
 }
 
@@ -280,7 +281,7 @@ resource "azurerm_subnet" "main" {
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = ["10.0.1.0/24"]
 
-  enforce_private_link_endpoint_network_policies = false
+  private_endpoint_network_policies = "Disabled"
 }
 
 resource "azurerm_private_dns_zone" "key_vault" {
@@ -308,14 +309,13 @@ resource "azurerm_private_endpoint" "key_vault" {
     subresource_names              = ["vault"]
     is_manual_connection           = false
   }
-}
 
-resource "azurerm_private_dns_zone_group" "key_vault" {
-  name                = "${var.project_name}-kv-dns-group"
-  private_endpoint_id = azurerm_private_endpoint.key_vault.id
-  private_dns_zone_ids = [
-    azurerm_private_dns_zone.key_vault.id,
-  ]
+  private_dns_zone_group {
+    name                 = "${var.project_name}-kv-dns-group"
+    private_dns_zone_ids = [
+      azurerm_private_dns_zone.key_vault.id,
+    ]
+  }
 }
 
 resource "azurerm_key_vault_access_policy" "terraform_user" {
@@ -423,6 +423,6 @@ resource "azurerm_static_web_app" "main" {
   name                = "${var.project_name}-swa-${var.environment}"
   resource_group_name = azurerm_resource_group.main.name
   location            = "eastus2"
-  sku_tier            = "Free"
-  sku_size            = "Free"
+  sku_tier            = "Standard"
+  sku_size            = "Standard"
 }
