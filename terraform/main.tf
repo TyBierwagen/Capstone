@@ -256,6 +256,7 @@ resource "azurerm_key_vault" "main" {
   location                   = azurerm_resource_group.main.location
   tenant_id                  = data.azurerm_client_config.current.tenant_id
   sku_name                   = "standard"
+  public_network_access_enabled = false
 }
 
 resource "azurerm_key_vault_access_policy" "terraform_user" {
