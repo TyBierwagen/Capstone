@@ -5,9 +5,11 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   build_and_deploy_job:
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     name: Build and Deploy Job
     steps:
