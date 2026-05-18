@@ -136,11 +136,14 @@ export async function fetchCustomDateRange(startDate, endDate) {
   }
 }
 
-export async function refreshData(showLoading = false, isAuto = false) {
-  if (!state.isConnected) { showAlert('Activate monitoring to refresh', 'error'); return; }
+export async function refreshData(showLoading = false, isAuto = false, allowDisconnected = false) {
+  if (!state.isConnected && !allowDisconnected) {
+    showAlert('Activate monitoring to refresh', 'error');
+    return false;
+  }
   if (state.refreshInProgress) {
     console.debug('Refresh already in progress; skipping overlapping request');
-    return;
+    return false;
   }
   state.refreshInProgress = true;
   
@@ -186,18 +189,18 @@ export async function refreshData(showLoading = false, isAuto = false) {
     if (latestResponse.status === 401) {
       showAlert('Unauthorized: Function key missing or invalid.', 'error');
       addLogEntry('Unauthorized (401) from API');
-      return;
+      return false;
     }
     if (latestResponse.status === 403) {
       showAlert('Forbidden: Access denied. Check CORS or API Gateway settings.', 'error');
       addLogEntry('Forbidden (403) from API - check origins');
-      return;
+      return false;
     }
     if (latestResponse.status === 404) {
       const mode = state.deviceIp ? `device ${state.deviceIp}` : 'any device';
       showAlert(`No data found for ${mode}`, 'warning');
       addLogEntry('Waiting for incoming data...');
-      return;
+      return false;
     }
     if (!latestResponse.ok) throw new Error('Failed to load latest data');
 
@@ -261,10 +264,12 @@ export async function refreshData(showLoading = false, isAuto = false) {
     const displayTimescale = inCustomMode ? 'custom range' : timescale;
     const scaleLabel = document.querySelector(`#timeScale option[value="${document.getElementById('timeScale')?.value || '1h'}"]`)?.textContent || displayTimescale;
     addLogEntry(shouldRefreshHistory ? `Synced data for ${scaleLabel}` : 'Synced latest telemetry');
+    return true;
   } catch (error) { 
     console.error('Refresh error', error); 
     showAlert('Unable to reach the API', 'error'); 
     addLogEntry('Refresh failed'); 
+    return false;
   } finally {
     if (shouldShowLive) setLoading('liveSensorsCard', false);
     if (shouldShowTrends) setLoading('trendsCard', false);
@@ -350,8 +355,6 @@ export async function connect() {
   }
 
   state.deviceIp = isFilterEnabled ? ipInput : '';
-  state.isConnected = true;
-  
   if (state.deviceIp) {
     localStorage.setItem('deviceIp', ipInput);
     addLogEntry(`Filtering for device ${ipInput}`);
@@ -359,12 +362,23 @@ export async function connect() {
     addLogEntry('Watching all device telemetry');
   }
 
-  // Force overlay removal immediately
-  updateConnectionStatus(true); 
-  showAlert('Dashboard active', 'success'); 
-  
-  // Start data sync
-  startAutoRefresh();
+  // Keep the UI disconnected until the first successful refresh completes.
+  updateConnectionStatus(false);
+  addLogEntry('Attempting to connect to sensor database...');
+
+  const connected = await refreshData(true, false, true);
+  if (connected) {
+    state.isConnected = true;
+    updateConnectionStatus(true);
+    showAlert('Connected to sensor database', 'success');
+    addLogEntry('Dashboard active');
+    startAutoRefresh();
+  } else {
+    state.isConnected = false;
+    updateConnectionStatus(false);
+    showAlert('Unable to connect to sensor database', 'error');
+    addLogEntry('Initial connection attempt failed');
+  }
 }
 
 export function disconnect() { 
