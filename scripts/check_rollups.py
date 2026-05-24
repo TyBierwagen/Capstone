@@ -22,61 +22,67 @@ def load_local_settings():
             os.environ[key] = value
 
 
-load_local_settings()
+def main():
+    load_local_settings()
+    print("check_rollups: starting...", flush=True)
 
-conn = os.getenv("STORAGE_CONNECTION_STRING") or os.getenv("AzureWebJobsStorage")
-if not conn:
-    print("No STORAGE_CONNECTION_STRING or AzureWebJobsStorage environment variable found.")
-    raise SystemExit(1)
+    conn = os.getenv("STORAGE_CONNECTION_STRING") or os.getenv("AzureWebJobsStorage")
+    if not conn:
+        print("No STORAGE_CONNECTION_STRING or AzureWebJobsStorage environment variable found.", flush=True)
+        raise SystemExit(1)
 
-try:
-    svc = TableServiceClient.from_connection_string(conn)
-    tc = svc.get_table_client("SensorHistoryRollups")
-except Exception as e:
-    print("Failed to connect to Table service:", e)
-    raise
+    try:
+        svc = TableServiceClient.from_connection_string(conn)
+        tc = svc.get_table_client("SensorHistoryRollups")
+    except Exception as e:
+        print("Failed to connect to Table service:", e, flush=True)
+        raise
 
-counts = Counter()
-samples = {}
-try:
-    for e in tc.query_entities(query_filter="", select=["PartitionKey","RowKey","granularity","timestamp","deviceIp"]):
-        g = e.get("granularity") or "unknown"
-        counts[g] += 1
-        if g not in samples:
-            samples[g] = {k: e.get(k) for k in ("PartitionKey","RowKey","timestamp","deviceIp")}
-except Exception as e:
-    print("Failed querying SensorHistoryRollups:", e)
-    raise
+    counts = Counter()
+    samples = {}
+    try:
+        for e in tc.query_entities(query_filter="", select=["PartitionKey","RowKey","granularity","timestamp","deviceIp"]):
+            g = e.get("granularity") or "unknown"
+            counts[g] += 1
+            if g not in samples:
+                samples[g] = {k: e.get(k) for k in ("PartitionKey","RowKey","timestamp","deviceIp")}
+    except Exception as e:
+        print("Failed querying SensorHistoryRollups:", e, flush=True)
+        raise
 
-print("Rollup counts:", dict(counts))
-print("Sample rows:", samples)
-try:
-    # breakdown by device
-    by_device = {}
-    for e in tc.query_entities(query_filter="", select=["granularity","deviceIp"]):
-        g = e.get("granularity") or "unknown"
-        d = e.get("deviceIp") or "unknown"
-        by_device.setdefault(g, {})[d] = by_device.setdefault(g, {}).get(d, 0) + 1
-    print("\nRollup counts by device (sample):")
-    for g, m in by_device.items():
-        print(f"  {g}: {len(m)} devices, totals per-device sample: {dict(list(m.items())[:5])}")
-except Exception as e:
-    print("Failed to enumerate rollups by device:", e)
+    print("Rollup counts:", dict(counts), flush=True)
+    print("Sample rows:", samples, flush=True)
+    try:
+        # breakdown by device
+        by_device = {}
+        for e in tc.query_entities(query_filter="", select=["granularity","deviceIp"]):
+            g = e.get("granularity") or "unknown"
+            d = e.get("deviceIp") or "unknown"
+            by_device.setdefault(g, {})[d] = by_device.setdefault(g, {}).get(d, 0) + 1
+        print("\nRollup counts by device (sample):", flush=True)
+        for g, m in by_device.items():
+            print(f"  {g}: {len(m)} devices, totals per-device sample: {dict(list(m.items())[:5])}", flush=True)
+    except Exception as e:
+        print("Failed to enumerate rollups by device:", e, flush=True)
 
-try:
-    sd = svc.get_table_client("SensorData")
-    partitions = {}
-    sample_partitions = []
-    count = 0
-    for e in sd.query_entities(query_filter="", select=["PartitionKey","RowKey"]):
-        pk = e.get("PartitionKey")
-        if len(sample_partitions) < 20:
-            sample_partitions.append(pk)
-        count += 1
-        if count >= 10000:
-            # avoid scanning too long; stop after 10k rows
-            break
-    print("\nSensorData sample PartitionKeys (first 20 rows):", sample_partitions)
-    print("Scanned rows (capped at 10000):", count)
-except Exception as e:
-    print("Failed to query SensorData:", e)
+    try:
+        sd = svc.get_table_client("SensorData")
+        partitions = {}
+        sample_partitions = []
+        count = 0
+        for e in sd.query_entities(query_filter="", select=["PartitionKey","RowKey"]):
+            pk = e.get("PartitionKey")
+            if len(sample_partitions) < 20:
+                sample_partitions.append(pk)
+            count += 1
+            if count >= 10000:
+                # avoid scanning too long; stop after 10k rows
+                break
+        print("\nSensorData sample PartitionKeys (first 20 rows):", sample_partitions, flush=True)
+        print("Scanned rows (capped at 10000):", count, flush=True)
+    except Exception as e:
+        print("Failed to query SensorData:", e, flush=True)
+
+
+if __name__ == "__main__":
+    main()

@@ -38,6 +38,10 @@ def now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def get_alert_recipient(default: str = "tybierwagen@gmail.com") -> str:
+    return os.getenv("ALERT_RECIPIENT") or default
+
+
 def parse_timestamp_utc(value):
     """Parse timestamp values into an aware UTC datetime."""
     if not value:
@@ -711,6 +715,56 @@ def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
         return json_response({"error": "Device IP is required"}, status=400)
 
     entry = store_sensor_entry(payload)
+
+    # Battery low alert: if battery present and numeric < 3.3V, send alert.
+    try:
+        battery_val = entry.get("battery")
+        battery_float = None
+        if battery_val is not None:
+            try:
+                battery_float = float(battery_val)
+            except Exception:
+                battery_float = None
+
+        if battery_float is not None and battery_float < 3.3:
+            device_id = entry.get("deviceId") or payload.get("deviceId") or "unknown"
+            last_seen = entry.get("timestamp") or now_iso()
+
+            devices_client = get_table_client("Devices")
+            dev_row = None
+            if devices_client:
+                try:
+                    dev_row = devices_client.get_entity(partition_key="Device", row_key=device_ip.replace('.', '_'))
+                except Exception:
+                    # If we cannot read device row, proceed with sending alert and create/update later
+                    dev_row = None
+
+            logging.warning("Battery low for %s (deviceId=%s): %sV. Sending alert.", device_ip, device_id, battery_float)
+            try:
+                send_alert_email(str(device_id), last_seen, subject_override=f"ALERT: Low Battery - {device_id}")
+            except Exception as e:
+                logging.error("Failed to send battery alert email: %s", e)
+
+            # Update device's lastAlertSentAt (optional) so records reflect alert activity
+            if devices_client:
+                try:
+                    if not dev_row:
+                        dev_row = {
+                            "PartitionKey": "Device",
+                            "RowKey": device_ip.replace('.', '_'),
+                            "id": device_id,
+                            "ip": device_ip,
+                            "registeredAt": now_iso(),
+                            "lastSeen": last_seen,
+                            "status": "active",
+                        }
+                    dev_row["lastAlertSentAt"] = now_iso()
+                    devices_client.upsert_entity(mode=UpdateMode.REPLACE, entity=dev_row)
+                except Exception as e:
+                    logging.error("Failed to update device lastAlertSentAt after battery alert: %s", e)
+    except Exception as e:
+        logging.exception("Battery alert check failed: %s", e)
+
     return json_response({"message": "Sensor data stored", "data": entry}, status=201)
 
 
@@ -826,7 +880,7 @@ def test_email(req: func.HttpRequest) -> func.HttpResponse:
             except:
                 pass
 
-        to = (req.params.get("to") or (body.get("to") if body else None) or os.getenv("ALERT_RECIPIENT") or "tybierwagen@gmail.com")
+        to = (req.params.get("to") or (body.get("to") if body else None) or get_alert_recipient())
         sender = (req.params.get("from") or (body.get("from") if body else None) or os.getenv("ACS_SENDER_EMAIL") or "DoNotReply@tybierwagen.com")
 
         # Temporarily override env vars for this process so send_alert_email picks them up
@@ -879,7 +933,7 @@ def send_alert_email(device_id: str, last_seen: str, subject_override: Optional[
     Returns a dict describing how the send was attempted and any identifiers or errors.
     Example: { "method": "acs", "id": "<msg-id>" } or { "method": "smtp", "sent": True }
     """
-    recipient = os.getenv("ALERT_RECIPIENT", "tybierwagen@tamu.edu")
+    recipient = get_alert_recipient()
 
     # Try Azure Communication Services first (connection string stored in Key Vault for production)
     acs_conn = os.getenv("ACS_CONNECTION_STRING")

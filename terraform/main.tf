@@ -394,6 +394,7 @@ resource "azurerm_linux_function_app" "main" {
   app_settings = {
     FUNCTIONS_WORKER_RUNTIME                 = "python"
     FUNCTIONS_EXTENSION_VERSION              = "~4"
+    AzureWebJobsFeatureFlags                 = "EnableWorkerIndexing"
     WEBSITE_RUN_FROM_PACKAGE                 = "1"
     AzureWebJobsStorage                      = azurerm_storage_account.main.primary_connection_string
     STORAGE_CONNECTION_STRING                = azurerm_storage_account.main.primary_connection_string

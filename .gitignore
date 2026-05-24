@@ -35,6 +35,24 @@ node_modules/
 __pycache__/
 *.pyc
 
+# Python virtual envs
+.venv/
+venv/
+
+# VS Code
+.vscode/
+
+# Test / cache
+.pytest_cache/
+.mypy_cache/
+pip-wheel-metadata/
+*.egg-info/
+
+# Generated zip listing files
+zip-*.txt
+
+zip-*
+
 # Build outputs
 dist/
 build/

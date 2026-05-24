@@ -45,12 +45,21 @@ echo "Enabling remote build settings for Python dependencies..."
 az functionapp config appsettings set \
   --name "$FUNCTION_APP" \
   --resource-group "$RESOURCE_GROUP" \
-  --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true ENABLE_ORYX_BUILD=true >/dev/null
+  --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true ENABLE_ORYX_BUILD=true AzureWebJobsFeatureFlags=EnableWorkerIndexing >/dev/null
 
 echo "Creating deployment zip from functions/..."
 rm -f "$ZIP_PATH"
+STAGING_DIR="/tmp/capstone-functions-stage-$$"
+rm -rf "$STAGING_DIR"
+mkdir -p "$STAGING_DIR"
+cp functions/host.json "$STAGING_DIR"/
+cp functions/function_app.py "$STAGING_DIR"/
+cp functions/requirements.txt "$STAGING_DIR"/
+cp functions/.funcignore "$STAGING_DIR"/ 2>/dev/null || true
+cp functions/response_prod.json "$STAGING_DIR"/ 2>/dev/null || true
+cp functions/local.settings.json.example "$STAGING_DIR"/ 2>/dev/null || true
 (
-  cd functions
+  cd "$STAGING_DIR"
   zip -r "$ZIP_PATH" . >/dev/null
 )
 
@@ -67,6 +76,7 @@ echo "Waiting for app to warm up..."
 sleep 12
 
 rm -f "$ZIP_PATH"
+rm -rf "$STAGING_DIR"
 
 echo
 echo "Functions-only deployment complete."

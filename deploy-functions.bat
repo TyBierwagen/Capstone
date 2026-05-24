@@ -59,7 +59,7 @@ echo Function App : %FUNCTION_APP%
 echo Resource Group: %RESOURCE_GROUP%
 
 echo Enabling remote build settings for Python dependencies...
-call az functionapp config appsettings set --name "%FUNCTION_APP%" --resource-group "%RESOURCE_GROUP%" --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true ENABLE_ORYX_BUILD=true >nul
+call az functionapp config appsettings set --name "%FUNCTION_APP%" --resource-group "%RESOURCE_GROUP%" --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true ENABLE_ORYX_BUILD=true AzureWebJobsFeatureFlags=EnableWorkerIndexing >nul
 if errorlevel 1 (
   echo ERROR: Failed to set remote build app settings.
   exit /b 1
@@ -92,7 +92,7 @@ if not defined FUNC_CMD (
 if defined FUNC_CMD if "%SKIP_FUNC_PUBLISH%"=="0" (
   echo Publishing Functions with Core Tools...
   pushd functions
-  call "%FUNC_CMD%" azure functionapp publish "%FUNCTION_APP%" --python
+  call "%FUNC_CMD%" azure functionapp publish "%FUNCTION_APP%" --python --build remote
   set "PUBLISH_EXIT=%ERRORLEVEL%"
   popd
   if "!PUBLISH_EXIT!"=="0" goto after_deploy
@@ -111,11 +111,16 @@ if defined FUNC_CMD if "%SKIP_FUNC_PUBLISH%"=="0" (
 if exist "%ZIP_PATH%" del /f /q "%ZIP_PATH%" >nul 2>nul
 
 echo Creating deployment zip from functions\ ...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '.\functions\*' -DestinationPath '%ZIP_PATH%' -Force"
+set "STAGING_DIR=%TEMP%\capstone-functions-stage-%RANDOM%"
+if exist "%STAGING_DIR%" rmdir /s /q "%STAGING_DIR%"
+mkdir "%STAGING_DIR%" >nul 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$stage = '%STAGING_DIR%'; Get-ChildItem -Force '.\functions' | Where-Object { $_.Name -notin @('.venv','__pycache__') } | Copy-Item -Destination $stage -Recurse -Force; if (Test-Path (Join-Path $stage '.python_packages')) { Write-Host 'Including .python_packages in deployment package.' }; Compress-Archive -Path (Join-Path $stage '*') -DestinationPath '%ZIP_PATH%' -Force"
 if errorlevel 1 (
   echo ERROR: Failed to create zip package.
   exit /b 1
 )
+
+if exist "%STAGING_DIR%" rmdir /s /q "%STAGING_DIR%"
 
 echo Uploading zip package to Azure Functions...
 call az functionapp deployment source config-zip --name "%FUNCTION_APP%" --resource-group "%RESOURCE_GROUP%" --src "%ZIP_PATH%"
