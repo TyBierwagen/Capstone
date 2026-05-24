@@ -10,6 +10,7 @@ export const state = {
   historyCache: {},
   lastTimescale: '1h',
   refreshInProgress: false,
+  deviceDirectory: [],
   visibleOrder: [],
   movingAvgWindow: 0,
   robot: { x: 0, y: 0, angle: 0, trail: [{ x: 0, y: 0 }] },

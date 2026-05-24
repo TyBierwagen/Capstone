@@ -34,6 +34,94 @@ def get_table_client(table_name: str):
         return None
     return table_service.get_table_client(table_name)
 
+
+def device_email_alerts_enabled(device: Optional[Dict[str, Any]]) -> bool:
+    if not device:
+        return True
+    return parse_bool(device.get("emailAlertsEnabled"), True)
+
+
+def normalize_device_entity(device: Dict[str, Any], catalog_refreshed_at: Optional[str] = None) -> Dict[str, Any]:
+    row_key = str(device.get("RowKey") or device.get("id") or device.get("ip") or device.get("deviceIp") or "unknown")
+    ip_address = str(device.get("ip") or device.get("deviceIp") or row_key.replace("_", "."))
+    status = str(device.get("status") or "active")
+    device_type = str(device.get("type") or device.get("deviceType") or "soil_sensor")
+
+    normalized = dict(device)
+    normalized["PartitionKey"] = device.get("PartitionKey") or "Device"
+    normalized["RowKey"] = row_key
+    normalized["id"] = device.get("id") or row_key
+    normalized["ip"] = ip_address
+    normalized["type"] = device_type
+    normalized["status"] = status
+    normalized["emailAlertsEnabled"] = parse_bool(device.get("emailAlertsEnabled"), True)
+    normalized["registeredAt"] = sanitize_timestamp(device.get("registeredAt") or device.get("Timestamp") or now_iso())
+    normalized["lastSeen"] = sanitize_timestamp(device.get("lastSeen") or device.get("Timestamp") or now_iso())
+    if device.get("lastAlertSentAt"):
+        normalized["lastAlertSentAt"] = sanitize_timestamp(device.get("lastAlertSentAt"))
+    if catalog_refreshed_at is not None:
+        normalized["catalogRefreshedAt"] = sanitize_timestamp(catalog_refreshed_at)
+    elif device.get("catalogRefreshedAt"):
+        normalized["catalogRefreshedAt"] = sanitize_timestamp(device.get("catalogRefreshedAt"))
+    return normalized
+
+
+def persist_device_catalog_entry(device: Dict[str, Any], catalog_refreshed_at: Optional[str] = None) -> None:
+    client = get_table_client("Devices")
+    if not client:
+        return
+
+    try:
+        client.upsert_entity(mode=UpdateMode.REPLACE, entity=normalize_device_entity(device, catalog_refreshed_at=catalog_refreshed_at))
+    except Exception as ex:
+        logging.warning("Failed to persist device catalog entry for %s: %s", device.get("RowKey") or device.get("ip") or device.get("deviceIp"), ex)
+
+
+def refresh_device_catalog() -> int:
+    client = get_table_client("Devices")
+    if not client:
+        return 0
+
+    try:
+        devices = list(client.query_entities(query_filter="PartitionKey eq 'Device'"))
+    except Exception as ex:
+        logging.error("Failed to query device catalog: %s", ex)
+        return 0
+
+    refreshed_at = now_iso()
+    refreshed = 0
+    for device in devices:
+        try:
+            entity = normalize_device_entity(device, catalog_refreshed_at=refreshed_at)
+            client.upsert_entity(mode=UpdateMode.REPLACE, entity=entity)
+            refreshed += 1
+        except Exception as ex:
+            logging.warning("Failed to refresh device catalog row %s: %s", device.get("RowKey"), ex)
+
+    return refreshed
+
+
+def list_device_catalog() -> list:
+    client = get_table_client("Devices")
+    if not client:
+        return []
+
+    try:
+        devices = list(client.query_entities(query_filter="PartitionKey eq 'Device'"))
+    except Exception as ex:
+        logging.error("Failed to list devices: %s", ex)
+        return []
+
+    normalized = [normalize_device_entity(device) for device in devices]
+    normalized.sort(
+        key=lambda item: (
+            parse_timestamp_utc(item.get("lastSeen")) or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc),
+            str(item.get("ip") or item.get("RowKey") or ""),
+        ),
+        reverse=True,
+    )
+    return normalized
+
 def now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -158,6 +246,7 @@ def persist_device(device_id: str, ip_address: str, port: int, device_type: str,
 
     registered_at = existing["registeredAt"] if existing else now
     last_seen_value = last_seen or now
+    email_alerts_enabled = parse_bool(existing.get("emailAlertsEnabled"), True) if existing else True
     
     device_info = {
         "PartitionKey": "Device",
@@ -169,10 +258,12 @@ def persist_device(device_id: str, ip_address: str, port: int, device_type: str,
         "registeredAt": registered_at,
         "lastSeen": last_seen_value,
         "status": "active",
+        "emailAlertsEnabled": email_alerts_enabled,
     }
     
     if client:
         client.upsert_entity(mode=UpdateMode.REPLACE, entity=device_info)
+        persist_device_catalog_entry(device_info)
     
     return device_info
 
@@ -741,7 +832,10 @@ def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
 
             logging.warning("Battery low for %s (deviceId=%s): %sV. Sending alert.", device_ip, device_id, battery_float)
             try:
-                send_alert_email(str(device_id), last_seen, subject_override=f"ALERT: Low Battery - {device_id}")
+                if device_email_alerts_enabled(dev_row):
+                    send_alert_email(str(device_id), last_seen, subject_override=f"ALERT: Low Battery - {device_id}")
+                else:
+                    logging.info("Battery low alert skipped for %s because email alerts are disabled.", device_ip)
             except Exception as e:
                 logging.error("Failed to send battery alert email: %s", e)
 
@@ -760,6 +854,7 @@ def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
                         }
                     dev_row["lastAlertSentAt"] = now_iso()
                     devices_client.upsert_entity(mode=UpdateMode.REPLACE, entity=dev_row)
+                    persist_device_catalog_entry(dev_row)
                 except Exception as e:
                     logging.error("Failed to update device lastAlertSentAt after battery alert: %s", e)
     except Exception as e:
@@ -806,6 +901,66 @@ def get_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
         return json_response({"error": message}, status=404)
 
     return json_response(entry)
+
+
+@app.function_name("updateDeviceSettings")
+@app.route(route="devices", methods=["PATCH"], auth_level=func.AuthLevel.FUNCTION)
+@safe_function
+def update_device_settings(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info("Device update request received")
+
+    try:
+        payload = req.get_json()
+    except ValueError as exc:
+        logging.warning("Invalid JSON for device update: %s", exc)
+        return json_response({"error": "Invalid JSON payload"}, status=400)
+
+    device_ip = payload.get("deviceIp") or payload.get("ip")
+    device_id = payload.get("id")
+
+    if not device_ip and not device_id:
+        return json_response({"error": "deviceIp or id is required"}, status=400)
+
+    client = get_table_client("Devices")
+    if not client:
+        return json_response({"error": "Device catalog is unavailable"}, status=503)
+
+    row_key = device_ip.replace(".", "_") if device_ip else str(device_id)
+
+    try:
+        existing = client.get_entity(partition_key="Device", row_key=row_key)
+    except Exception as ex:
+        logging.warning("Device row not found for update (%s): %s", row_key, ex)
+        return json_response({"error": "Device not found"}, status=404)
+
+    updated = dict(existing)
+    if "emailAlertsEnabled" in payload:
+        updated["emailAlertsEnabled"] = parse_bool(payload.get("emailAlertsEnabled"), True)
+        updated["lastAlertSentAt"] = None
+    if "status" in payload:
+        updated["status"] = str(payload.get("status") or updated.get("status") or "active")
+    if "type" in payload or "deviceType" in payload:
+        updated["type"] = str(payload.get("type") or payload.get("deviceType") or updated.get("type") or "soil_sensor")
+
+    normalized = normalize_device_entity(updated, catalog_refreshed_at=updated.get("catalogRefreshedAt"))
+    client.upsert_entity(mode=UpdateMode.REPLACE, entity=normalized)
+
+    return json_response({"message": "Device updated", "device": normalized})
+
+
+@app.function_name("listDevices")
+@app.route(route="devices", methods=["GET"], auth_level=func.AuthLevel.FUNCTION)
+def list_devices(req: func.HttpRequest) -> func.HttpResponse:
+    include_inactive = parse_bool(req.params.get("includeInactive"), True)
+    devices = list_device_catalog()
+    if not include_inactive:
+        devices = [device for device in devices if str(device.get("status") or "").lower() == "active"]
+
+    return json_response({
+        "devices": devices,
+        "count": len(devices),
+        "catalogRefreshedAt": devices[0].get("catalogRefreshedAt") if devices else None,
+    })
 
 
 @app.function_name("queueControlCommand")
@@ -1085,6 +1240,10 @@ def check_device_health(myTimer: func.TimerRequest) -> None:
             last_seen_str = device.get("lastSeen")
             if not last_seen_str:
                 continue
+
+            if not device_email_alerts_enabled(device):
+                logging.info("Device %s is offline but excluded from email alerts.", device.get("RowKey"))
+                continue
             
             last_seen = parse_timestamp_utc(last_seen_str)
             if not last_seen:
@@ -1112,6 +1271,7 @@ def check_device_health(myTimer: func.TimerRequest) -> None:
                     # Update device with alert timestamp
                     device["lastAlertSentAt"] = now_iso()
                     client.update_entity(mode=UpdateMode.REPLACE, entity=device)
+                    persist_device_catalog_entry(device)
                 else:
                     logging.info("Device %s is offline but alert was already sent recently.", device.get("RowKey"))
             else:
@@ -1120,6 +1280,15 @@ def check_device_health(myTimer: func.TimerRequest) -> None:
                     logging.info("Device %s is back online. Resetting alert status.", device.get("RowKey"))
                     device["lastAlertSentAt"] = None
                     client.update_entity(mode=UpdateMode.REPLACE, entity=device)
+                    persist_device_catalog_entry(device)
                 
     except Exception as e:
         logging.error("Health check query failed: %s", e)
+
+
+@app.function_name("refreshDeviceCatalog")
+@app.timer_trigger(schedule="0 15 2 * * *", arg_name="myTimer", run_on_startup=False, use_monitor=False)
+def refresh_device_catalog_timer(myTimer: func.TimerRequest) -> None:
+    logging.info("Running daily device catalog refresh")
+    refreshed = refresh_device_catalog()
+    logging.info("Daily device catalog refresh completed: %d rows refreshed", refreshed)

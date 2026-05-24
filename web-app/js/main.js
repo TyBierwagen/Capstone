@@ -15,7 +15,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const savedUnit = localStorage.getItem('tempUnit');
   if (savedUnit) { state.tempUnit = savedUnit; const toggle = document.getElementById('tempUnitToggle'); if (toggle) toggle.checked = savedUnit === 'F'; const tempUnitEl = document.querySelector('#temperature')?.nextElementSibling; if (tempUnitEl) tempUnitEl.textContent = savedUnit === 'F' ? '°F' : '°C'; }
 
-  const savedUseProd = localStorage.getItem('useProd'); if (savedUseProd !== null) state.useProd = savedUseProd === 'true'; const apiToggle = document.getElementById('apiSourceToggle'); if (apiToggle) apiToggle.checked = state.useProd;
+  const savedUseProd = localStorage.getItem('useProd');
+  if (savedUseProd !== null) {
+    state.useProd = savedUseProd === 'true';
+  } else {
+    const isLocalWorkspace = window.location.protocol === 'file:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    state.useProd = !isLocalWorkspace;
+  }
+  const apiToggle = document.getElementById('apiSourceToggle'); if (apiToggle) apiToggle.checked = state.useProd;
   const savedRawHistory = localStorage.getItem('rawHistory');
   const rawHistoryToggle = document.getElementById('rawHistoryToggle');
   if (rawHistoryToggle) rawHistoryToggle.checked = savedRawHistory === 'true';

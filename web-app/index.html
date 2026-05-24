@@ -183,6 +183,99 @@
       font-weight: 600;
     }
 
+    .device-manager-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .device-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(110px, 0.7fr) minmax(110px, 0.85fr) minmax(0, 0.9fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .device-alert-control {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
+      justify-self: end;
+    }
+
+    .device-alert-control .device-subtitle {
+      margin-top: 0;
+      text-align: right;
+    }
+
+    .device-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+
+    .device-subtitle {
+      margin-top: 4px;
+      font-size: 12px;
+      color: #94a3b8;
+    }
+
+    .device-status-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    .device-status-pill.active,
+    .device-status-pill.online {
+      background: rgba(52, 211, 153, 0.15);
+      color: #6ee7b7;
+    }
+
+    .device-status-pill.offline,
+    .device-status-pill.stale {
+      background: rgba(248, 113, 113, 0.14);
+      color: #fca5a5;
+    }
+
+    .device-status-pill.unknown {
+      background: rgba(148, 163, 184, 0.14);
+      color: #cbd5f5;
+    }
+
+    .device-empty {
+      padding: 18px;
+      text-align: center;
+      color: #94a3b8;
+      border-radius: 12px;
+      border: 1px dashed rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    @media (max-width: 760px) {
+      .device-row {
+        grid-template-columns: 1fr;
+      }
+
+      .device-alert-control {
+        align-items: flex-start;
+        justify-self: start;
+      }
+
+      .device-alert-control .device-subtitle {
+        text-align: left;
+      }
+    }
+
     .alert {
       margin: 20px 0;
       padding: 12px 18px;
@@ -446,7 +539,7 @@
   <div class="glow-layer"></div>
   <section class="hero">
     <h1>Stake Capsule Insights</h1>
-    <p>View live telemetry from your sensors in real-time. Data is uploaded from ESP-32 periodically to a database and displayed here.</p>
+    <p>View live telemetry from your sensors in real-time. Data is uploaded from capsules periodically to a database and displayed here.</p>
   </section>
 
   <div class="container">
@@ -655,6 +748,23 @@
             </label>
           </div>
         </div>
+      </div>
+
+      <div class="card" id="deviceManagerCard" style="margin-top: 12px; margin-bottom: 24px; grid-column: 1 / -1;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;">
+          <div>
+            <h2 style="margin-bottom: 6px;">Device Manager</h2>
+            <div style="font-size: 13px; color: #94a3b8;">Backend-maintained catalog of every known device, with per-device email alert controls</div>
+          </div>
+          <div style="display:flex; align-items:center; gap: 12px; flex-wrap: wrap; font-size: 13px; color:#94a3b8;">
+            <span>Devices: <strong id="deviceCount">0</strong></span>
+            <span>Last sync: <strong id="deviceDirectoryUpdatedAt">--</strong></span>
+          </div>
+        </div>
+        <div id="deviceManagerList" class="device-manager-list">
+          <div class="device-empty">Connect to load the device catalog.</div>
+        </div>
+        <p style="margin-top: 12px; font-size: 13px; color:#cbd5f5;">The backend refreshes this catalog in daily maintenance bursts so the dashboard can read a compact device list instead of scanning sensor history.</p>
       </div>
 
       

@@ -75,6 +75,118 @@ export function updateDeviceInfo(payload) {
   updateValueIfIdExists('deviceLastSeen', ls, true);
 }
 
+export function renderDeviceManager(devices, meta = {}) {
+  const list = document.getElementById('deviceManagerList');
+  if (!list) return;
+
+  const normalizedDevices = Array.isArray(devices) ? devices : [];
+  state.deviceDirectory = normalizedDevices;
+
+  const countEl = document.getElementById('deviceCount');
+  if (countEl) countEl.textContent = String(normalizedDevices.length);
+
+  const updatedEl = document.getElementById('deviceDirectoryUpdatedAt');
+  if (updatedEl) updatedEl.textContent = meta.catalogRefreshedAt ? formatTimestamp(meta.catalogRefreshedAt) : (normalizedDevices.length ? new Date().toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  }) : '--');
+
+  list.innerHTML = '';
+
+  if (!normalizedDevices.length) {
+    const empty = document.createElement('div');
+    empty.className = 'device-empty';
+    empty.textContent = 'No devices have been cataloged yet. The backend refreshes this list during daily maintenance bursts.';
+    list.appendChild(empty);
+    return;
+  }
+
+  normalizedDevices.forEach((device) => {
+    const row = document.createElement('div');
+    row.className = 'device-row';
+    const alertsEnabled = device.emailAlertsEnabled !== false && String(device.emailAlertsEnabled).toLowerCase() !== 'false';
+
+    const identity = document.createElement('div');
+    const title = document.createElement('div');
+    title.className = 'device-title';
+    title.textContent = device.deviceName || device.id || device.ip || 'Unknown device';
+    const subtitle = document.createElement('div');
+    subtitle.className = 'device-subtitle';
+    subtitle.textContent = [device.ip || '--', device.type || 'soil_sensor'].filter(Boolean).join(' · ');
+    identity.appendChild(title);
+    identity.appendChild(subtitle);
+
+    const statusWrap = document.createElement('div');
+    const status = document.createElement('span');
+    const statusValue = String(device.status || 'unknown').toLowerCase();
+    status.className = `device-status-pill ${statusValue.replace(/[^a-z0-9_-]/g, '-')}`;
+    status.textContent = statusValue;
+    statusWrap.appendChild(status);
+
+    const details = document.createElement('div');
+    details.className = 'device-subtitle';
+    details.textContent = device.port ? `Port ${device.port}` : 'Port --';
+
+    const lastSeen = document.createElement('div');
+    lastSeen.className = 'device-subtitle';
+    lastSeen.textContent = `Last seen: ${formatTimestamp(device.lastSeen || device.Timestamp)}`;
+
+    const alertControl = document.createElement('div');
+    alertControl.className = 'device-alert-control';
+
+    const alertLabel = document.createElement('div');
+    alertLabel.className = 'device-subtitle';
+    alertLabel.textContent = alertsEnabled ? 'Email alerts enabled' : 'Excluded from email alerts';
+
+    const alertSwitch = document.createElement('label');
+    alertSwitch.className = 'switch small-switch';
+    alertSwitch.style.margin = '0';
+    alertSwitch.title = alertsEnabled ? 'Disable email alerts for this device' : 'Enable email alerts for this device';
+
+    const alertToggle = document.createElement('input');
+    alertToggle.type = 'checkbox';
+    alertToggle.checked = alertsEnabled;
+    alertToggle.addEventListener('change', async (event) => {
+      const nextEnabled = event.target.checked;
+      const updater = window.setDeviceEmailAlertsEnabled;
+
+      if (typeof updater !== 'function') {
+        event.target.checked = !nextEnabled;
+        showAlert('Device alert controls are unavailable right now.', 'error');
+        return;
+      }
+
+      event.target.disabled = true;
+      try {
+        await updater(device.ip || device.id || device.RowKey, nextEnabled);
+      } catch (error) {
+        event.target.checked = !nextEnabled;
+        showAlert(error?.message || 'Failed to update device alerts', 'error');
+      } finally {
+        event.target.disabled = false;
+      }
+    });
+
+    const alertSlider = document.createElement('span');
+    alertSlider.className = 'slider';
+
+    alertSwitch.appendChild(alertToggle);
+    alertSwitch.appendChild(alertSlider);
+    alertControl.appendChild(alertLabel);
+    alertControl.appendChild(alertSwitch);
+
+    row.appendChild(identity);
+    row.appendChild(statusWrap);
+    row.appendChild(details);
+    row.appendChild(lastSeen);
+    row.appendChild(alertControl);
+    list.appendChild(row);
+  });
+}
+
 function updateValueIfIdExists(id, value, isTimestamp = false) {
   const el = document.getElementById(id);
   if (!el) return;

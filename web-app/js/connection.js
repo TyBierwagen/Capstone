@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { showAlert, addLogEntry, setLoading, updateSensorDisplay, updateDeviceInfo } from './ui.js';
+import { showAlert, addLogEntry, setLoading, updateSensorDisplay, updateDeviceInfo, renderDeviceManager } from './ui.js';
 import { updateChart, initChart } from './chart.js';
 
 const PROD_API_URL = 'https://soilrobot-apim-dev.azure-api.net/api';
@@ -44,6 +44,72 @@ async function fetchHistoryByTimescale(baseUrl, params, fetchOptions, timescale,
 
   return rows;
 }
+
+async function fetchDeviceCatalog(fetchOptions) {
+  const params = new URLSearchParams();
+  const apiKey = localStorage.getItem('functionKey');
+  if (apiKey) params.append('code', apiKey);
+
+  const base = getApiBaseUrl();
+  const response = await fetch(`${base.replace(/\/$/, '')}/devices?${params.toString()}`, fetchOptions);
+  if (!response.ok) throw new Error(`Device catalog fetch failed (${response.status})`);
+  const body = await response.json();
+  const devices = Array.isArray(body?.devices) ? body.devices : [];
+  state.deviceDirectory = devices;
+  return {
+    devices,
+    catalogRefreshedAt: body?.catalogRefreshedAt || null,
+  };
+}
+
+export async function setDeviceEmailAlertsEnabled(deviceIp, enabled) {
+  if (!deviceIp) {
+    throw new Error('Device IP is required');
+  }
+
+  const apiKey = localStorage.getItem('functionKey');
+  const params = new URLSearchParams();
+  if (apiKey) params.append('code', apiKey);
+
+  const base = getApiBaseUrl();
+  const response = await fetch(`${base.replace(/\/$/, '')}/devices?${params.toString()}`, {
+    method: 'PATCH',
+    mode: 'cors',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      deviceIp,
+      emailAlertsEnabled: !!enabled,
+    }),
+  });
+
+  if (!response.ok) {
+    let message = `Device update failed (${response.status})`;
+    try {
+      const body = await response.json();
+      if (body?.error) message = body.error;
+    } catch (error) {
+      // Ignore JSON parse failures and fall back to the generic message.
+    }
+    throw new Error(message);
+  }
+
+  const body = await response.json();
+  try {
+    await refreshData(false);
+  } catch (refreshError) {
+    console.warn('Device catalog refresh failed after alert setting update', refreshError);
+  }
+
+  const stateLabel = enabled ? 'enabled' : 'disabled';
+  showAlert(`Email alerts ${stateLabel} for ${deviceIp}`, 'success');
+  addLogEntry(`Email alerts ${stateLabel} for ${deviceIp}`);
+
+  return body?.device || null;
+}
+
+window.setDeviceEmailAlertsEnabled = setDeviceEmailAlertsEnabled;
 
 function isValidDate(value) {
   return value instanceof Date && !Number.isNaN(value.getTime());
@@ -186,6 +252,7 @@ export async function refreshData(showLoading = false, isAuto = false, allowDisc
     // Fetch latest telemetry first so unfiltered history requests can target a concrete device partition.
     const base = getApiBaseUrl();
     const latestResponse = await fetch(`${base.replace(/\/$/, '')}/sensor-data?${params.toString()}`, fetchOptions);
+    let latestData = null;
     if (latestResponse.status === 401) {
       showAlert('Unauthorized: Function key missing or invalid.', 'error');
       addLogEntry('Unauthorized (401) from API');
@@ -200,14 +267,20 @@ export async function refreshData(showLoading = false, isAuto = false, allowDisc
       const mode = state.deviceIp ? `device ${state.deviceIp}` : 'any device';
       showAlert(`No data found for ${mode}`, 'warning');
       addLogEntry('Waiting for incoming data...');
-      return false;
-    }
-    if (!latestResponse.ok) throw new Error('Failed to load latest data');
+    } else {
+      if (!latestResponse.ok) throw new Error('Failed to load latest data');
 
-    const latestData = await latestResponse.json();
-    updateSensorDisplay(latestData);
-    updateDeviceInfo(latestData);
-    if (shouldShowLive) setLoading('liveSensorsCard', false);
+      latestData = await latestResponse.json();
+      updateSensorDisplay(latestData);
+      updateDeviceInfo(latestData);
+    }
+
+    const deviceCatalogPromise = fetchDeviceCatalog(fetchOptions)
+      .catch((error) => {
+        console.warn('Device catalog fetch failed', error);
+        addLogEntry('Device catalog is unavailable right now');
+        return { devices: [], catalogRefreshedAt: null };
+      });
 
     // For historical/chart queries, do not filter by IP — always request aggregated
     // history across partitions. Use a fresh params object for history fetches.
@@ -246,7 +319,10 @@ export async function refreshData(showLoading = false, isAuto = false, allowDisc
     let chartData = [];
     let chartTimescale = selectedTimescale;
 
-    const selectedHistoryRows = await selectedHistoryPromise;
+    const [selectedHistoryRows, deviceCatalogRows] = await Promise.all([
+      selectedHistoryPromise,
+      deviceCatalogPromise,
+    ]);
     if (Array.isArray(selectedHistoryRows)) {
       chartData = selectedHistoryRows;
       if (historyFetchError) {
@@ -261,6 +337,8 @@ export async function refreshData(showLoading = false, isAuto = false, allowDisc
       // remember which timescale we just loaded so switching back doesn't incorrectly skip fetches
       try { state.lastTimescale = selectedTimescale; } catch (e) { /* ignore */ }
     }
+
+    renderDeviceManager(Array.isArray(deviceCatalogRows?.devices) ? deviceCatalogRows.devices : [], deviceCatalogRows || {});
     const displayTimescale = inCustomMode ? 'custom range' : timescale;
     const scaleLabel = document.querySelector(`#timeScale option[value="${document.getElementById('timeScale')?.value || '1h'}"]`)?.textContent || displayTimescale;
     addLogEntry(shouldRefreshHistory ? `Synced data for ${scaleLabel}` : 'Synced latest telemetry');
@@ -346,11 +424,20 @@ function hasCachedChartData() {
 
 export async function connect() {
   console.log('Connecting...');
+  const connectBtn = document.getElementById('connectBtn');
+  if (connectBtn) {
+    connectBtn.disabled = true;
+    connectBtn.textContent = 'Connecting...';
+  }
   const isFilterEnabled = !!document.getElementById('filterIpToggle')?.checked;
   const ipInput = document.getElementById('deviceIp')?.value.trim() || '';
 
   if (isFilterEnabled && !ipInput) {
     showAlert('Please enter an IP or turn off filtering', 'error');
+    if (connectBtn) {
+      connectBtn.disabled = false;
+      connectBtn.textContent = state.isConnected ? 'Disconnect' : 'Connect';
+    }
     return;
   }
 
@@ -378,6 +465,11 @@ export async function connect() {
     updateConnectionStatus(false);
     showAlert('Unable to connect to sensor database', 'error');
     addLogEntry('Initial connection attempt failed');
+  }
+
+  if (connectBtn) {
+    connectBtn.disabled = false;
+    connectBtn.textContent = state.isConnected ? 'Disconnect' : 'Connect';
   }
 }
 
