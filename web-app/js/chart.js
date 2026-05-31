@@ -314,6 +314,20 @@ export function normalizeAxes() {
   // Always ensure fresh date formatter for X axis
   const dateFormatter = (value) => {
     if (typeof value !== 'number') return '';
+    // If Chart.js supplied a small integer (e.g. 1..31) instead of epoch ms
+    // try to interpret it as a day-offset from the current axis min so
+    // labels render as month/day instead of bare numbers.
+    try {
+      const d = new Date(value);
+      if (!isNaN(d.getTime()) && d.getFullYear() > 1971) return formatDateTimeTwoLine(value);
+    } catch (e) { /* fallthrough */ }
+    const minX = state.chart?.options?.scales?.x?.min;
+    const dayMs = 24 * 60 * 60 * 1000;
+    if (typeof minX === 'number' && Number.isFinite(minX) && value >= 0 && value < 10000) {
+      const ms = minX + Math.round(value) * dayMs;
+      return formatDateTimeTwoLine(ms);
+    }
+    // Fallback: try parsing as ISO string or seconds->ms
     return formatDateTimeTwoLine(value);
   };
   const scales = { x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', callback: dateFormatter } } };
@@ -388,6 +402,16 @@ export function updateChart(history, timescale = '1h') {
   // Start with fresh options to avoid circular references from previous chart updates
   const dateFormatter = (value) => {
     if (typeof value !== 'number') return '';
+    try {
+      const d = new Date(value);
+      if (!isNaN(d.getTime()) && d.getFullYear() > 1971) return formatDateTimeTwoLine(value);
+    } catch (e) { /* fallthrough */ }
+    const minX = state.chart?.options?.scales?.x?.min;
+    const dayMs = 24 * 60 * 60 * 1000;
+    if (typeof minX === 'number' && Number.isFinite(minX) && value >= 0 && value < 10000) {
+      const ms = minX + Math.round(value) * dayMs;
+      return formatDateTimeTwoLine(ms);
+    }
     return formatDateTimeTwoLine(value);
   };
   state.chart.options = {
