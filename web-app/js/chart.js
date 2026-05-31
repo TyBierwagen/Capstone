@@ -140,9 +140,18 @@ function formatDateTimeTwoLine(value) {
 function tooltipTitleFromTimestamp(items) {
   if (!Array.isArray(items) || items.length === 0) return '';
   const first = items[0];
-  const x = first?.parsed?.x ?? first?.raw?.x;
-  if (typeof x !== 'number') return '';
-  return formatDateTimeTwoLine(x);
+  // Prefer parsed numeric value; if chart provides a string timestamp,
+  // attempt to parse it to milliseconds so formatting works.
+  let x = first?.parsed?.x ?? first?.raw?.x;
+  if (typeof x !== 'number') {
+    // Try to coerce ISO-like strings to ms
+    try {
+      const coerced = (typeof x === 'string' && x) ? Date.parse(x) : NaN;
+      if (!Number.isNaN(coerced)) x = coerced;
+    } catch (e) { /* fallthrough */ }
+  }
+  if (typeof x !== 'number' || Number.isNaN(x)) return '';
+  return formatDateTimeTwoLine(Number(x));
 }
 
 function csvEscape(value) {

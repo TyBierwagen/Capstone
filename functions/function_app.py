@@ -544,7 +544,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
     else:
         time_filter = None
 
-    rollup_map = {"1d": "hour", "1m": "day", "1y": "month", "all": "month"}
+    rollup_map = {"1d": "hour", "1m": "day", "1y": "week", "all": "month"}
 
     def fetch_rollup_history() -> Optional[list]:
         if raw or timescale not in rollup_map:
@@ -564,6 +564,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
                 q = f"{q} and timestamp ge '{since_str}'"
             try:
                 rollup_entities = list(rollup_client.query_entities(query_filter=q))
+                logging.info(f"Rollup query for device {device_ip} granularity={granularity}: found {len(rollup_entities)} entities (pk={pk}, query={q})")
             except Exception as ex:
                 logging.debug("Rollup partition query failed for %s: %s", pk, ex)
         else:
@@ -573,10 +574,12 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
                 q = f"{q} and timestamp ge '{since_str}'"
             try:
                 rollup_entities = list(rollup_client.query_entities(query_filter=q))
+                logging.info(f"Rollup query global granularity={granularity}: found {len(rollup_entities)} entities (query={q})")
             except Exception as ex:
                 logging.debug("Rollup global query failed for granularity=%s: %s", granularity, ex)
 
         if not rollup_entities:
+            logging.warning(f"No rollup entities found for timescale={timescale}, granularity={granularity}, device_ip={device_ip}")
             return None
 
         rows = []
@@ -584,7 +587,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
             ts = e.get('timestamp') or e.get('RowKey')
             if isinstance(ts, datetime.datetime):
                 ts = ts.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
-            rows.append({
+            row = {
                 'timestamp': sanitize_timestamp(ts) if ts else None,
                 'moisture': e.get('moisture'),
                 'temperature': e.get('temperature'),
@@ -594,9 +597,71 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
                 'battery': e.get('battery'),
                 'deviceIp': e.get('deviceIp'),
                 'isRollup': True,
-            })
+            }
+            logging.debug(f"Rollup entity: ts={ts}, parsed_ts={row['timestamp']}, granularity={e.get('granularity')}")
+            rows.append(row)
 
         rows_sorted = sorted([r for r in rows if r.get('timestamp')], key=lambda x: timestamp_sort_key(x.get('timestamp')))
+        logging.info(f"Rollup rows after timestamp filtering: {len(rows_sorted)} valid rows (from {len(rows)} total)")
+        if rows_sorted:
+            logging.info(f"Rollup timestamp range: {rows_sorted[0]['timestamp']} to {rows_sorted[-1]['timestamp']}")
+
+        # For month-timescale (30 days) prefer a deterministic per-day average
+        # so the frontend always receives one point per day even when some
+        # rollup buckets are missing. This produces a stable 30-point series
+        # with ISO timestamps at UTC midnight for each day.
+        if granularity == 'day' and timescale == '1m':
+            try:
+                # Determine the start day (since) and produce 30 days
+                if since:
+                    start_dt = since
+                else:
+                    start_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30)
+                start_day = (start_dt.astimezone(datetime.timezone.utc).date())
+                daily = []
+                # Index available rollup rows by UTC date for fast lookup
+                idx = {}
+                for r in rows_sorted:
+                    parsed = parse_timestamp_utc(r.get('timestamp'))
+                    if not parsed:
+                        continue
+                    idx[parsed.date()] = r
+
+                for i in range(0, 30):
+                    day = start_day + datetime.timedelta(days=i)
+                    day_start = datetime.datetime.combine(day, datetime.time.min, tzinfo=datetime.timezone.utc)
+                    ts_iso = day_start.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+                    row = idx.get(day)
+                    if row:
+                        daily.append({
+                            'timestamp': sanitize_timestamp(row.get('timestamp') or ts_iso),
+                            'moisture': row.get('moisture'),
+                            'temperature': row.get('temperature'),
+                            'humidity': row.get('humidity'),
+                            'battery': row.get('battery'),
+                            'ph': row.get('ph'),
+                            'light': row.get('light'),
+                            'deviceIp': row.get('deviceIp'),
+                            'isRollup': True,
+                        })
+                    else:
+                        # Missing day -> emit placeholder with nulls so chart shows gaps
+                        daily.append({
+                            'timestamp': sanitize_timestamp(ts_iso),
+                            'moisture': None,
+                            'temperature': None,
+                            'humidity': None,
+                            'battery': None,
+                            'ph': None,
+                            'light': None,
+                            'deviceIp': device_ip,
+                            'isRollup': True,
+                        })
+
+                logging.debug(f"fetch_rollup_history returning {len(daily)} daily points for 1m timescale")
+                return daily[-limit:] if limit else daily
+            except Exception as ex:
+                logging.exception('Failed to build deterministic daily series for 1m rollups: %s', ex)
 
         # Keep rollup responses consistent with raw-data aggregation by
         # returning approximately `target_points` data points. This ensures
@@ -631,13 +696,16 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
                 'isAggregated': True,
             })
 
-        return aggregated[:target_points] if not limit else aggregated[-limit:]
+        result = aggregated[:target_points] if not limit else aggregated[-limit:]
+        logging.debug(f"fetch_rollup_history returning {len(result)} points (rolled up from {len(rows_sorted)}, limit={limit})")
+        return result
 
     # Use precomputed rollups first for the long-range views so we avoid
     # scanning raw SensorData when the answer is already materialized.
     if not start_timestamp and not end_timestamp and not raw:
         rollup_history = fetch_rollup_history()
         if rollup_history is not None:
+            logging.info(f"Returning {len(rollup_history)} rollup points for timescale={timescale}")
             return rollup_history
 
     entities = []
