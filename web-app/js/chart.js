@@ -6,6 +6,27 @@ let tickFormatMode = '1h';
 
 // Remove date-fns guard — we don't rely on the adapter; use numeric linear axis instead
 
+// Normalize various timestamp formats returned by the API or sensors.
+// - Accepts numbers (ms or seconds) and ISO-like strings.
+// - Returns a number (ms since epoch) for numeric inputs, or a normalized string
+//   that `new Date()` can parse for ISO-like inputs.
+function sanitizeTs(ts) {
+  if (ts === null || ts === undefined) return null;
+  // If already a number, assume ms unless it's suspiciously small (seconds)
+  if (typeof ts === 'number') {
+    return (ts > 0 && ts < 1e12) ? (ts * 1000) : ts;
+  }
+  let v = String(ts).trim();
+  // Normalize common timezone variants
+  v = v.replace(/\+00:00Z$/, 'Z').replace(/\+00:00$/, 'Z');
+  // Pure digits may be epoch seconds or milliseconds; coerce to number and normalize
+  if (/^\d+$/.test(v)) {
+    const n = Number(v);
+    return (n > 0 && n < 1e12) ? (n * 1000) : n;
+  }
+  return v;
+}
+
 function getAxisId(index) { return index === 0 ? 'y' : 'y' + index; }
 function getAxisPosition(index) { return (index % 2 === 0) ? 'right' : 'left'; }
 
@@ -20,9 +41,9 @@ function formatDateTimeTwoLine(value) {
     const timestamps = state.historyData
       .map(h => {
         try {
-          let ts = String(h.timestamp || '').trim();
-          ts = ts.replace(/\+00:00Z$/, 'Z').replace(/\+00:00$/, 'Z');
-          return new Date(ts).getTime();
+          const s = sanitizeTs(h.timestamp);
+          const tms = (typeof s === 'number') ? s : new Date(s).getTime();
+          return isNaN(tms) ? NaN : tms;
         } catch {
           return NaN;
         }
@@ -305,13 +326,7 @@ export function updateChart(history, timescale = '1h') {
     state.chart.data.datasets[2].axisTitle = 'Battery (V)';
     state.chart.data.datasets[2].axisColor = '#fbbf24';
   }
-  // Sanitize timestamps to handle variants like '+00:00Z' or '+00:00' that some browsers parse inconsistently
-  const sanitizeTs = (ts) => {
-    if (!ts) return null;
-    let v = String(ts).trim();
-    v = v.replace(/\+00:00Z$/, 'Z').replace(/\+00:00$/, 'Z');
-    return v;
-  };
+  // Use top-level sanitizeTs helper for timestamp normalization
 
   // Build point arrays using timestamps (ms) so X spacing is linear with time
   const pointsHum = [];
