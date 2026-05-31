@@ -2,7 +2,7 @@ import { state } from './state.js';
 import { showAlert, addLogEntry, setLoading, updateSensorDisplay, updateDeviceInfo, renderDeviceManager } from './ui.js';
 import { updateChart, initChart } from './chart.js';
 
-const PROD_API_URL = 'https://stakecapsulerobot-apim-dev.azure-api.net/api';
+const PROD_API_URL = 'https://soilrobot-func-dev.azurewebsites.net/api';
 // Local functions host (adjust port to match your running host)
 const LOCAL_API_URL = 'http://localhost:7070/api';
 
