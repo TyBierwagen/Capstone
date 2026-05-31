@@ -27,6 +27,48 @@ function sanitizeTs(ts) {
   return v;
 }
 
+function parseTimestampMs(ts) {
+  const normalized = sanitizeTs(ts);
+  if (normalized === null || normalized === undefined) return NaN;
+  if (typeof normalized === 'number') return normalized;
+  const ms = new Date(normalized).getTime();
+  return Number.isNaN(ms) ? NaN : ms;
+}
+
+function getExpectedHistoryBounds(history, timescale) {
+  const validTimes = Array.isArray(history)
+    ? history.map((h) => parseTimestampMs(h?.timestamp)).filter((value) => Number.isFinite(value))
+    : [];
+
+  if (validTimes.length === 0) return null;
+
+  const maxObserved = Math.max(...validTimes);
+  const dayMs = 24 * 60 * 60 * 1000;
+
+  if (timescale === 'custom' && state.customDateRange?.start && state.customDateRange?.end) {
+    return {
+      min: state.customDateRange.start.getTime(),
+      max: state.customDateRange.end.getTime(),
+    };
+  }
+
+  if (timescale === '1m') {
+    return {
+      min: maxObserved - (35 * dayMs),
+      max: maxObserved + dayMs,
+    };
+  }
+
+  if (timescale === '1y') {
+    return {
+      min: maxObserved - (370 * dayMs),
+      max: maxObserved + dayMs,
+    };
+  }
+
+  return null;
+}
+
 function getAxisId(index) { return index === 0 ? 'y' : 'y' + index; }
 function getAxisPosition(index) { return (index % 2 === 0) ? 'right' : 'left'; }
 
@@ -285,7 +327,19 @@ export function setAxisDisplayByDatasetIndex(index, visible) {
 export function updateChart(history, timescale = '1h') {
   try {
   if (!state.chart || !history) return;
-  state.historyData = history; state.lastTimescale = timescale; tickFormatMode = timescale;
+  const expectedBounds = getExpectedHistoryBounds(history, timescale);
+  const boundedHistory = Array.isArray(history)
+    ? history.filter((h) => {
+      const x = parseTimestampMs(h?.timestamp);
+      if (!Number.isFinite(x)) return false;
+      if (!expectedBounds) return true;
+      return x >= expectedBounds.min && x <= expectedBounds.max;
+    })
+    : [];
+  if (expectedBounds && boundedHistory.length !== history.length) {
+    console.warn('Filtered out-of-range history points', { input: history.length, kept: boundedHistory.length, timescale, bounds: expectedBounds });
+  }
+  state.historyData = boundedHistory; state.lastTimescale = timescale; tickFormatMode = timescale;
   ensureDatasetAxisMeta();
   syncVisibleOrderFromDatasets();
   const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
@@ -311,12 +365,10 @@ export function updateChart(history, timescale = '1h') {
     }
   };
   // Sort by normalized millisecond timestamp to avoid string/seconds vs ms parsing bugs
-  const sorted = [...history].slice().sort((a, b) => {
+  const sorted = [...boundedHistory].slice().sort((a, b) => {
     try {
-      const ta = sanitizeTs(a?.timestamp);
-      const tb = sanitizeTs(b?.timestamp);
-      const ma = (typeof ta === 'number') ? ta : new Date(ta).getTime();
-      const mb = (typeof tb === 'number') ? tb : new Date(tb).getTime();
+      const ma = parseTimestampMs(a?.timestamp);
+      const mb = parseTimestampMs(b?.timestamp);
       if (Number.isNaN(ma) && Number.isNaN(mb)) return 0;
       if (Number.isNaN(ma)) return 1;
       if (Number.isNaN(mb)) return -1;
@@ -419,11 +471,11 @@ export function updateChart(history, timescale = '1h') {
   }
 
   // Set explicit X axis bounds
-  const firstValid = sorted.find(h => !isNaN(new Date(sanitizeTs(h.timestamp)).getTime()));
-  const lastValid = [...sorted].reverse().find(h => !isNaN(new Date(sanitizeTs(h.timestamp)).getTime()));
+  const firstValid = sorted.find(h => Number.isFinite(parseTimestampMs(h.timestamp)));
+  const lastValid = [...sorted].reverse().find(h => Number.isFinite(parseTimestampMs(h.timestamp)));
   if (firstValid && lastValid) {
-    const min = new Date(sanitizeTs(firstValid.timestamp)).getTime();
-    const max = new Date(sanitizeTs(lastValid.timestamp)).getTime();
+    const min = parseTimestampMs(firstValid.timestamp);
+    const max = parseTimestampMs(lastValid.timestamp);
     state.chart.options.scales.x.min = min;
     state.chart.options.scales.x.max = max;
 

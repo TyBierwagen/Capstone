@@ -205,6 +205,11 @@ def sanitize_timestamp(value):
     return None if not value else str(value)
 
 
+def timestamp_sort_key(value):
+    parsed = parse_timestamp_utc(value)
+    return parsed if parsed is not None else datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+
+
 def json_response(payload: dict, status: int = 200, headers: dict = None) -> func.HttpResponse:
     h = headers.copy() if headers else {}
     # Default CORS header may be overridden by caller; allow environment override.
@@ -591,7 +596,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
                 'isRollup': True,
             })
 
-        rows_sorted = sorted([r for r in rows if r.get('timestamp')], key=lambda x: str(x.get('timestamp')))
+        rows_sorted = sorted([r for r in rows if r.get('timestamp')], key=lambda x: timestamp_sort_key(x.get('timestamp')))
 
         # Keep rollup responses consistent with raw-data aggregation by
         # returning approximately `target_points` data points. This ensures
@@ -671,9 +676,10 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
         pass
         
     # Sort chronological
-    raw_history = sorted([dict(e) for e in entities], key=lambda x: str(x.get("timestamp", "")))
+    raw_history = sorted([dict(e) for e in entities], key=lambda x: timestamp_sort_key(x.get("timestamp")))
 
     # Ensure every entry has a timestamp string (fallback to Table's Timestamp value when present)
+    filtered_history = []
     for r in raw_history:
         if not r.get("timestamp"):
             ts_obj = r.get("Timestamp")
@@ -684,6 +690,9 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
         # Normalize timestamp formats to be parseable by the browser
         if r.get("timestamp"):
             r["timestamp"] = sanitize_timestamp(r.get("timestamp"))
+        if not parse_timestamp_utc(r.get("timestamp")):
+            logging.warning("Skipping row with unparseable timestamp: %r", r.get("timestamp"))
+            continue
         # Stabilize keys so frontend always sees the same payload shape.
         r.setdefault("humidity", None)
         r.setdefault("temperature", None)
@@ -691,26 +700,27 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
         r.setdefault("moisture", None)
         r.setdefault("ph", None)
         r.setdefault("light", None)
+        filtered_history.append(r)
 
     # If custom end_timestamp provided, filter to that as well
     if until:
-        raw_history = [r for r in raw_history if (parse_timestamp_utc(r.get("timestamp")) or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)) <= until]
+        filtered_history = [r for r in filtered_history if (parse_timestamp_utc(r.get("timestamp")) or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)) <= until]
 
     # If raw flag is set, return unaggregated data (for custom date-range queries)
     if raw:
-        logging.debug(f"Returning {len(raw_history)} raw data points (no aggregation)")
-        return raw_history[-limit:] if limit else raw_history
+        logging.debug(f"Returning {len(filtered_history)} raw data points (no aggregation)")
+        return filtered_history[-limit:] if limit else filtered_history
 
     # If we have too many points, aggregate them to ~60 points for the chart
     target_points = 60
-    if len(raw_history) <= target_points or timescale == "1h":
-        return raw_history[-limit:] if (timescale == "all" and limit) else raw_history
+    if len(filtered_history) <= target_points or timescale == "1h":
+        return filtered_history[-limit:] if (timescale == "all" and limit) else filtered_history
 
     # Simple bucket aggregation
-    chunk_size = len(raw_history) // target_points
+    chunk_size = len(filtered_history) // target_points
     aggregated = []
-    for i in range(0, len(raw_history), chunk_size):
-        chunk = raw_history[i:i + chunk_size]
+    for i in range(0, len(filtered_history), chunk_size):
+        chunk = filtered_history[i:i + chunk_size]
         if not chunk: continue
         
         def avg(key):
