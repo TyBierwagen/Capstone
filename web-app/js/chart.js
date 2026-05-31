@@ -139,93 +139,86 @@ function formatDateTimeTwoLine(value) {
   return `${hour}:${minute}`;
 }
 
-function getChartMinMs() {
-  // Prefer explicit axis min
-  const optMin = state.chart?.options?.scales?.x?.min;
-  if (typeof optMin === 'number' && Number.isFinite(optMin)) return optMin;
+// Simple month/day formatter used for ticks and tooltips
+function formatMonthDay(ms) {
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return '';
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${month}/${day}`;
+}
 
-  // Fall back to dataset points
-  try {
-    const ds = state.chart?.data?.datasets || [];
-    let allX = [];
-    ds.forEach(d => { if (Array.isArray(d.data)) allX = allX.concat(d.data.map(p => (p && typeof p.x === 'number') ? p.x : NaN)); });
-    allX = allX.filter(x => typeof x === 'number' && Number.isFinite(x));
-    if (allX.length > 0) return Math.min(...allX);
-  } catch (e) { /* ignore */ }
+function formatMonthDayTime(ms) {
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return '';
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const hour = String(d.getHours()).padStart(2, '0');
+  const minute = String(d.getMinutes()).padStart(2, '0');
+  return `${month}/${day} ${hour}:${minute}`;
+}
 
-  // Fall back to historyData timestamps
-  try {
-    if (Array.isArray(state.historyData)) {
-      const ts = state.historyData.map(h => {
-        try { const s = sanitizeTs(h.timestamp); return (typeof s === 'number') ? s : new Date(s).getTime(); } catch { return NaN; }
-      }).filter(x => typeof x === 'number' && Number.isFinite(x));
-      if (ts.length) return Math.min(...ts);
+function isShortRange() {
+  const ts = state.lastTimescale || tickFormatMode;
+  if (!ts) return false;
+  if (ts === '1h' || ts === '1d') return true;
+  if (ts === 'custom' && state.customDateRange && state.customDateRange.start && state.customDateRange.end) {
+    const diff = state.customDateRange.end.getTime() - state.customDateRange.start.getTime();
+    return diff < (31 * 24 * 60 * 60 * 1000);
+  }
+  return false;
+}
+
+// Try to resolve a millisecond timestamp from Chart.js tick/tooltip value or index
+function toMsFromTick(value) {
+  const dayMs = 24 * 60 * 60 * 1000;
+  // Direct ms
+  if (typeof value === 'number' && value > 1e12) return value;
+  // If value is numeric but small, treat as index: try dataset point
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
+    try {
+      const ds = state.chart?.data?.datasets?.[0];
+      if (ds && Array.isArray(ds.data)) {
+        const p = ds.data[value];
+        if (p && typeof p.x === 'number') return p.x;
+      }
+    } catch (e) { /* ignore */ }
+  }
+  // If it's a label string, try parsing as ISO or numeric offset
+  if (typeof value === 'string' && value) {
+    const p = Date.parse(value);
+    if (!Number.isNaN(p)) return p;
+    const n = Number(value.trim());
+    if (!Number.isNaN(n)) {
+      const min = state.chart?.options?.scales?.x?.min;
+      if (typeof min === 'number' && Number.isFinite(min)) return min + Math.round(n) * dayMs;
     }
-  } catch (e) { /* ignore */ }
-
-  // Last resort: now - 30 days (UTC midnight)
-  const d = new Date();
-  d.setUTCHours(0,0,0,0);
-  return d.getTime() - (30 * 24 * 60 * 60 * 1000);
+  }
+  return NaN;
 }
 
 function tooltipTitleFromTimestamp(items) {
   if (!Array.isArray(items) || items.length === 0) return '';
   const first = items[0];
-  // Prefer parsed numeric value; if chart provides a string timestamp,
-  // attempt to parse it to milliseconds so formatting works.
-  let x = first?.parsed?.x ?? first?.raw?.x;
-  // If parsed.x looks like a small integer index (Chart.js may supply
-  // dataset index instead of epoch ms), try to recover the original
-  // point's `x` via dataset + dataIndex, then fall back to parsing.
-  if (typeof x === 'number' && Number.isFinite(x) && x >= 0 && x < 1e11 && Number.isInteger(x) && first?.datasetIndex != null && first?.dataIndex != null) {
+  // Prefer raw/parsed x, then dataset point, then labels
+  let ms = NaN;
+  ms = (first?.raw && typeof first.raw.x === 'number') ? first.raw.x : ms;
+  if (Number.isNaN(ms) && typeof first?.parsed?.x === 'number') ms = first.parsed.x;
+  if (Number.isNaN(ms) && Number.isInteger(first?.dataIndex)) {
     try {
       const ds = state.chart?.data?.datasets?.[first.datasetIndex];
       const pt = ds?.data?.[first.dataIndex];
-      const rawX = pt?.x ?? pt?.t ?? pt?.timestamp ?? first?.raw?.x;
-      if (typeof rawX === 'number' && Number.isFinite(rawX)) {
-        x = rawX;
-      } else if (typeof rawX === 'string' && rawX) {
-        const p = Date.parse(rawX);
-        if (!Number.isNaN(p)) x = p;
-      }
-    } catch (e) { /* ignore and fall through to parse below */ }
+      if (pt && typeof pt.x === 'number') ms = pt.x;
+    } catch (e) { /* ignore */ }
   }
-
-  if (typeof x !== 'number') {
-    // Try to coerce ISO-like strings to ms
-    try {
-      const coerced = (typeof x === 'string' && x) ? Date.parse(x) : NaN;
-      if (!Number.isNaN(coerced)) x = coerced;
-    } catch (e) { /* fallthrough */ }
+  if (Number.isNaN(ms)) {
+    const lbl = state.chart?.data?.labels?.[first?.dataIndex];
+    const parsed = (typeof lbl === 'string') ? Date.parse(lbl) : NaN;
+    if (!Number.isNaN(parsed)) ms = parsed;
+    else if (typeof lbl === 'number') ms = lbl;
   }
-  // Additional prod fallback: if parsed x is still a small integer index,
-  // and the chart labels array contains ISO-like strings, try parsing
-  // that label for the hover timestamp. Some deployments build Chart.js
-  // with different data shapes that leave labels populated instead of
-  // point.x values.
-  if ((typeof x !== 'number' || Number.isNaN(x)) && Number.isInteger(first?.dataIndex) && Array.isArray(state.chart?.data?.labels)) {
-    const lbl = state.chart.data.labels[first.dataIndex];
-    const dayMs = 24 * 60 * 60 * 1000;
-    if (typeof lbl === 'string' && lbl) {
-      // If label is ISO-like, parse directly
-      const p = Date.parse(lbl);
-      if (!Number.isNaN(p)) { x = p; }
-      else {
-        // If label is numeric (day-of-month or offset), treat as day offset
-        const n = Number(String(lbl).trim());
-        if (!Number.isNaN(n)) {
-          const min = getChartMinMs();
-          x = min + Math.round(n) * dayMs;
-        }
-      }
-    } else if (typeof lbl === 'number' && Number.isFinite(lbl)) {
-      const min = getChartMinMs();
-      x = min + Math.round(lbl) * dayMs;
-    }
-  }
-  if (typeof x !== 'number' || Number.isNaN(x)) return '';
-  return formatDateTimeTwoLine(Number(x));
+  if (Number.isNaN(ms)) return '';
+  return isShortRange() ? formatMonthDayTime(Number(ms)) : formatMonthDay(Number(ms));
 }
 
 function csvEscape(value) {
@@ -354,23 +347,11 @@ export function normalizeAxes() {
     { axisColor: '#f87171', axisTitle: `Temp (${unitLabel})`, side: 'left' },
     { axisColor: '#fbbf24', axisTitle: 'Battery (V)', side: 'right' }
   ];
-  // Always ensure fresh date formatter for X axis
+  // Simple X-axis formatter: resolve ms then show MM/DD
   const dateFormatter = (value) => {
-    if (typeof value !== 'number') return '';
-    // If value already looks like a full ms timestamp, use directly
-    try {
-      const d = new Date(value);
-      if (!isNaN(d.getTime()) && d.getFullYear() > 1971) return formatDateTimeTwoLine(value);
-    } catch (e) { /* fallthrough */ }
-    // Otherwise treat small numeric tick values as day-offsets from a
-    // computed chart minimum (robust across prod and local builds).
-    const minX = getChartMinMs();
-    const dayMs = 24 * 60 * 60 * 1000;
-    if (typeof minX === 'number' && Number.isFinite(minX) && value >= -365 && value <= 365) {
-      const ms = minX + Math.round(value) * dayMs;
-      return formatDateTimeTwoLine(ms);
-    }
-    return formatDateTimeTwoLine(value);
+    const ms = toMsFromTick(value);
+    if (!Number.isFinite(ms)) return '';
+    return isShortRange() ? formatMonthDayTime(ms) : formatMonthDay(ms);
   };
   const scales = { x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', callback: dateFormatter } } };
   let firstVisibleFound = false;
@@ -443,18 +424,9 @@ export function updateChart(history, timescale = '1h') {
   // Safety: apply a minimal safe options set before mutating scales/other options
   // Start with fresh options to avoid circular references from previous chart updates
   const dateFormatter = (value) => {
-    if (typeof value !== 'number') return '';
-    try {
-      const d = new Date(value);
-      if (!isNaN(d.getTime()) && d.getFullYear() > 1971) return formatDateTimeTwoLine(value);
-    } catch (e) { /* fallthrough */ }
-    const minX = getChartMinMs();
-    const dayMs = 24 * 60 * 60 * 1000;
-    if (typeof minX === 'number' && Number.isFinite(minX) && value >= 0 && value < 10000) {
-      const ms = minX + Math.round(value) * dayMs;
-      return formatDateTimeTwoLine(ms);
-    }
-    return formatDateTimeTwoLine(value);
+    const ms = toMsFromTick(value);
+    if (!Number.isFinite(ms)) return '';
+    return isShortRange() ? formatMonthDayTime(ms) : formatMonthDay(ms);
   };
   state.chart.options = {
     responsive: true,
