@@ -169,6 +169,18 @@ function tooltipTitleFromTimestamp(items) {
       if (!Number.isNaN(coerced)) x = coerced;
     } catch (e) { /* fallthrough */ }
   }
+  // Additional prod fallback: if parsed x is still a small integer index,
+  // and the chart labels array contains ISO-like strings, try parsing
+  // that label for the hover timestamp. Some deployments build Chart.js
+  // with different data shapes that leave labels populated instead of
+  // point.x values.
+  if ((typeof x !== 'number' || Number.isNaN(x)) && Number.isInteger(first?.dataIndex) && Array.isArray(state.chart?.data?.labels)) {
+    const lbl = state.chart.data.labels[first.dataIndex];
+    if (typeof lbl === 'string' && lbl) {
+      const p = Date.parse(lbl);
+      if (!Number.isNaN(p)) x = p;
+    }
+  }
   if (typeof x !== 'number' || Number.isNaN(x)) return '';
   return formatDateTimeTwoLine(Number(x));
 }
