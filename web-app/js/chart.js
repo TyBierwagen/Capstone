@@ -310,7 +310,19 @@ export function updateChart(history, timescale = '1h') {
       y2: { type: 'linear', position: 'right', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: false }, ticks: { color: '#fbbf24' }, title: { display: true, text: 'Battery (V)', color: '#fbbf24' } }
     }
   };
-  const sorted = [...history].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+  // Sort by normalized millisecond timestamp to avoid string/seconds vs ms parsing bugs
+  const sorted = [...history].slice().sort((a, b) => {
+    try {
+      const ta = sanitizeTs(a?.timestamp);
+      const tb = sanitizeTs(b?.timestamp);
+      const ma = (typeof ta === 'number') ? ta : new Date(ta).getTime();
+      const mb = (typeof tb === 'number') ? tb : new Date(tb).getTime();
+      if (Number.isNaN(ma) && Number.isNaN(mb)) return 0;
+      if (Number.isNaN(ma)) return 1;
+      if (Number.isNaN(mb)) return -1;
+      return ma - mb;
+    } catch (e) { return 0; }
+  });
   if (state.chart && state.chart.data && state.chart.data.datasets[0]) {
     state.chart.data.datasets[0].label = String(state.chart.data.datasets[0].label || 'Humidity (%)');
     state.chart.data.datasets[0].axisTitle = 'Humidity %';
