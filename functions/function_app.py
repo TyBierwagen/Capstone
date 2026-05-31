@@ -601,8 +601,44 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
             logging.debug(f"Rollup entity: ts={ts}, parsed_ts={row['timestamp']}, granularity={e.get('granularity')}")
             rows.append(row)
 
-        rows_sorted = sorted([r for r in rows if r.get('timestamp')], key=lambda x: timestamp_sort_key(x.get('timestamp')))
-        logging.info(f"Rollup rows after timestamp filtering: {len(rows_sorted)} valid rows (from {len(rows)} total)")
+        # Deduplicate rollup rows that share the same timestamp by averaging
+        # numeric fields. This prevents duplicate timestamp entries from
+        # appearing in production when multiple rollup entities exist for
+        # the same bucket.
+        grouped = {}
+        for r in rows:
+            ts = r.get('timestamp')
+            if not ts:
+                continue
+            g = grouped.get(ts)
+            if not g:
+                grouped[ts] = { 'count': 1, 'deviceIp': r.get('deviceIp'), 'timestamp': ts }
+                # accumulate sums for numeric keys
+                for k in ('moisture','temperature','humidity','battery','ph','light'):
+                    grouped[ts][f'sum_{k}'] = r.get(k) if isinstance(r.get(k),(int,float)) else 0.0
+                    grouped[ts][f'has_{k}'] = 1 if isinstance(r.get(k),(int,float)) else 0
+            else:
+                g = grouped[ts]
+                g['count'] += 1
+                if not g.get('deviceIp') and r.get('deviceIp'):
+                    g['deviceIp'] = r.get('deviceIp')
+                for k in ('moisture','temperature','humidity','battery','ph','light'):
+                    if isinstance(r.get(k),(int,float)):
+                        g[f'sum_{k}'] += r.get(k)
+                        g[f'has_{k}'] += 1
+
+        rows_deduped = []
+        for ts, g in grouped.items():
+            out = { 'timestamp': ts, 'deviceIp': g.get('deviceIp') }
+            for k in ('moisture','temperature','humidity','battery','ph','light'):
+                if g.get(f'has_{k}',0) > 0:
+                    out[k] = round(g.get(f'sum_{k}',0.0) / g.get(f'has_{k}'), 2)
+                else:
+                    out[k] = None
+            rows_deduped.append(out)
+
+        rows_sorted = sorted([r for r in rows_deduped if r.get('timestamp')], key=lambda x: timestamp_sort_key(x.get('timestamp')))
+        logging.info(f"Rollup rows after timestamp filtering: {len(rows_sorted)} valid rows (from {len(rows)} total, deduped={len(rows_deduped)})")
         if rows_sorted:
             logging.info(f"Rollup timestamp range: {rows_sorted[0]['timestamp']} to {rows_sorted[-1]['timestamp']}")
 

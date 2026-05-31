@@ -102,6 +102,8 @@ function formatDateTimeTwoLine(value) {
   
   const hour = String(d.getHours()).padStart(2, '0');
   const minute = String(d.getMinutes()).padStart(2, '0');
+  // Prefer month/day label for 1-month timescale or wide ranges
+  const rangeIsWide = (minDate && maxDate) ? ((maxDate.getTime() - minDate.getTime()) >= (14 * 24 * 60 * 60 * 1000)) : false;
   
   if (minDate && maxDate) {
     const minYear = minDate.getFullYear();
@@ -120,7 +122,7 @@ function formatDateTimeTwoLine(value) {
     }
     
     // Different months (same year): show month, day, time
-    if (minMonth !== maxMonth) {
+    if (minMonth !== maxMonth || rangeIsWide) {
       const month = String(d.getMonth() + 1).padStart(2, '0');
       const day = String(d.getDate()).padStart(2, '0');
       return `${month}/${day}\n${hour}:${minute}`;
@@ -143,6 +145,23 @@ function tooltipTitleFromTimestamp(items) {
   // Prefer parsed numeric value; if chart provides a string timestamp,
   // attempt to parse it to milliseconds so formatting works.
   let x = first?.parsed?.x ?? first?.raw?.x;
+  // If parsed.x looks like a small integer index (Chart.js may supply
+  // dataset index instead of epoch ms), try to recover the original
+  // point's `x` via dataset + dataIndex, then fall back to parsing.
+  if (typeof x === 'number' && Number.isFinite(x) && x >= 0 && x < 1e11 && Number.isInteger(x) && first?.datasetIndex != null && first?.dataIndex != null) {
+    try {
+      const ds = state.chart?.data?.datasets?.[first.datasetIndex];
+      const pt = ds?.data?.[first.dataIndex];
+      const rawX = pt?.x ?? pt?.t ?? pt?.timestamp ?? first?.raw?.x;
+      if (typeof rawX === 'number' && Number.isFinite(rawX)) {
+        x = rawX;
+      } else if (typeof rawX === 'string' && rawX) {
+        const p = Date.parse(rawX);
+        if (!Number.isNaN(p)) x = p;
+      }
+    } catch (e) { /* ignore and fall through to parse below */ }
+  }
+
   if (typeof x !== 'number') {
     // Try to coerce ISO-like strings to ms
     try {
