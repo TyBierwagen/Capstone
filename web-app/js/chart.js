@@ -139,6 +139,36 @@ function formatDateTimeTwoLine(value) {
   return `${hour}:${minute}`;
 }
 
+function getChartMinMs() {
+  // Prefer explicit axis min
+  const optMin = state.chart?.options?.scales?.x?.min;
+  if (typeof optMin === 'number' && Number.isFinite(optMin)) return optMin;
+
+  // Fall back to dataset points
+  try {
+    const ds = state.chart?.data?.datasets || [];
+    let allX = [];
+    ds.forEach(d => { if (Array.isArray(d.data)) allX = allX.concat(d.data.map(p => (p && typeof p.x === 'number') ? p.x : NaN)); });
+    allX = allX.filter(x => typeof x === 'number' && Number.isFinite(x));
+    if (allX.length > 0) return Math.min(...allX);
+  } catch (e) { /* ignore */ }
+
+  // Fall back to historyData timestamps
+  try {
+    if (Array.isArray(state.historyData)) {
+      const ts = state.historyData.map(h => {
+        try { const s = sanitizeTs(h.timestamp); return (typeof s === 'number') ? s : new Date(s).getTime(); } catch { return NaN; }
+      }).filter(x => typeof x === 'number' && Number.isFinite(x));
+      if (ts.length) return Math.min(...ts);
+    }
+  } catch (e) { /* ignore */ }
+
+  // Last resort: now - 30 days (UTC midnight)
+  const d = new Date();
+  d.setUTCHours(0,0,0,0);
+  return d.getTime() - (30 * 24 * 60 * 60 * 1000);
+}
+
 function tooltipTitleFromTimestamp(items) {
   if (!Array.isArray(items) || items.length === 0) return '';
   const first = items[0];
@@ -176,9 +206,22 @@ function tooltipTitleFromTimestamp(items) {
   // point.x values.
   if ((typeof x !== 'number' || Number.isNaN(x)) && Number.isInteger(first?.dataIndex) && Array.isArray(state.chart?.data?.labels)) {
     const lbl = state.chart.data.labels[first.dataIndex];
+    const dayMs = 24 * 60 * 60 * 1000;
     if (typeof lbl === 'string' && lbl) {
+      // If label is ISO-like, parse directly
       const p = Date.parse(lbl);
-      if (!Number.isNaN(p)) x = p;
+      if (!Number.isNaN(p)) { x = p; }
+      else {
+        // If label is numeric (day-of-month or offset), treat as day offset
+        const n = Number(String(lbl).trim());
+        if (!Number.isNaN(n)) {
+          const min = getChartMinMs();
+          x = min + Math.round(n) * dayMs;
+        }
+      }
+    } else if (typeof lbl === 'number' && Number.isFinite(lbl)) {
+      const min = getChartMinMs();
+      x = min + Math.round(lbl) * dayMs;
     }
   }
   if (typeof x !== 'number' || Number.isNaN(x)) return '';
@@ -314,20 +357,19 @@ export function normalizeAxes() {
   // Always ensure fresh date formatter for X axis
   const dateFormatter = (value) => {
     if (typeof value !== 'number') return '';
-    // If Chart.js supplied a small integer (e.g. 1..31) instead of epoch ms
-    // try to interpret it as a day-offset from the current axis min so
-    // labels render as month/day instead of bare numbers.
+    // If value already looks like a full ms timestamp, use directly
     try {
       const d = new Date(value);
       if (!isNaN(d.getTime()) && d.getFullYear() > 1971) return formatDateTimeTwoLine(value);
     } catch (e) { /* fallthrough */ }
-    const minX = state.chart?.options?.scales?.x?.min;
+    // Otherwise treat small numeric tick values as day-offsets from a
+    // computed chart minimum (robust across prod and local builds).
+    const minX = getChartMinMs();
     const dayMs = 24 * 60 * 60 * 1000;
-    if (typeof minX === 'number' && Number.isFinite(minX) && value >= 0 && value < 10000) {
+    if (typeof minX === 'number' && Number.isFinite(minX) && value >= -365 && value <= 365) {
       const ms = minX + Math.round(value) * dayMs;
       return formatDateTimeTwoLine(ms);
     }
-    // Fallback: try parsing as ISO string or seconds->ms
     return formatDateTimeTwoLine(value);
   };
   const scales = { x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', callback: dateFormatter } } };
@@ -406,7 +448,7 @@ export function updateChart(history, timescale = '1h') {
       const d = new Date(value);
       if (!isNaN(d.getTime()) && d.getFullYear() > 1971) return formatDateTimeTwoLine(value);
     } catch (e) { /* fallthrough */ }
-    const minX = state.chart?.options?.scales?.x?.min;
+    const minX = getChartMinMs();
     const dayMs = 24 * 60 * 60 * 1000;
     if (typeof minX === 'number' && Number.isFinite(minX) && value >= 0 && value < 10000) {
       const ms = minX + Math.round(value) * dayMs;
