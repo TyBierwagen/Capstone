@@ -3,7 +3,8 @@ import { showAlert, addLogEntry, setLoading, updateSensorDisplay, updateDeviceIn
 import { updateChart, initChart } from './chart.js';
 
 const PROD_API_URL = 'https://soilrobot-apim-dev.azure-api.net/api';
-const LOCAL_API_URL = 'http://localhost:7071/api';
+// Local functions host (adjust port to match your running host)
+const LOCAL_API_URL = 'http://localhost:7070/api';
 
 function setChartLoadingOverlay(visible) {
   const chartContainer = document.querySelector('[style*="height: 300px"]');
@@ -500,7 +501,10 @@ export function updateConnectionStatus(connected) {
 
   const cachedDataNote = document.getElementById('cachedDataNote');
   if (cachedDataNote) {
-    cachedDataNote.style.display = connected ? 'none' : 'block';
+    // Only show the cached-data notice when we're disconnected AND we actually
+    // have cached chart data to display. This avoids briefly flashing the note
+    // when the UI toggles connection state during startup.
+    cachedDataNote.style.display = (!connected && hasCachedChartData()) ? 'block' : 'none';
   }
 }
 

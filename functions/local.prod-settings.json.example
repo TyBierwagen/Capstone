@@ -2,11 +2,11 @@
   "IsEncrypted": false,
   "Values": {
     "FUNCTIONS_WORKER_RUNTIME": "python",
-    "AzureWebJobsStorage": "<Azure Storage connection string>",
-    "STORAGE_CONNECTION_STRING": "<Azure Storage connection string>",
+    "AzureWebJobsStorage": "REPLACE WITH STORAGE CONNECTION STRING",
     "ALERT_RECIPIENT": "tybierwagen@tamu.edu",
+    "STORAGE_CONNECTION_STRING": "Azure STORAGE CONNECTION STRING GOES HERE",
     "ACS_SENDER_EMAIL": "DoNotReply@tybierwagen.com",
-    "ACS_CONNECTION_STRING": "<Azure Communication Services connection string>",
+    "ACS_CONNECTION_STRING": "endpoint=https://stakecapsulerobot-comm-dev.unitedstates.communication.azure.com/;accesskey=REPLACE WITH ACTUAL KEY",
     "ENABLE_ROLLUP_RECONCILE": "true",
     "ROLLUP_RECONCILE_WINDOW_HOURS": "48",
     "ROLLUP_RECONCILE_MAX_ROWS": "50000",
@@ -14,7 +14,6 @@
     "ROLLUP_DAILY_BACKFILL_DAYS": "400",
     "ROLLUP_DAILY_BACKFILL_MAX_ROWS": "200000"
   }, 
-
   "Host": {
     "LocalHttpPort": 7070,
     "CORS": "*"
