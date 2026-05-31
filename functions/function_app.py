@@ -205,8 +205,17 @@ def sanitize_timestamp(value):
     return None if not value else str(value)
 
 
-def json_response(payload: dict, status: int = 200) -> func.HttpResponse:
-    return func.HttpResponse(json.dumps(payload), status_code=status, mimetype="application/json")
+def json_response(payload: dict, status: int = 200, headers: dict = None) -> func.HttpResponse:
+    h = headers.copy() if headers else {}
+    # Default CORS header may be overridden by caller; allow environment override.
+    origin = os.getenv("FRONTEND_ORIGIN") or "*"
+    if "Access-Control-Allow-Origin" not in h:
+        h["Access-Control-Allow-Origin"] = origin
+    if "Access-Control-Allow-Methods" not in h:
+        h["Access-Control-Allow-Methods"] = "GET, POST, PATCH, OPTIONS"
+    if "Access-Control-Allow-Headers" not in h:
+        h["Access-Control-Allow-Headers"] = "*"
+    return func.HttpResponse(json.dumps(payload), status_code=status, mimetype="application/json", headers=h)
 
 
 def safe_function(handler):
@@ -949,9 +958,16 @@ def update_device_settings(req: func.HttpRequest) -> func.HttpResponse:
 
 
 @app.function_name("listDevices")
-@app.route(route="devices", methods=["GET"], auth_level=func.AuthLevel.FUNCTION)
+@app.route(route="devices", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@safe_function
 def list_devices(req: func.HttpRequest) -> func.HttpResponse:
     include_inactive = parse_bool(req.params.get("includeInactive"), True)
+    # If the table client is not configured, return a 503 so the frontend
+    # can show an explicit error instead of silently rendering an empty list.
+    client = get_table_client("Devices")
+    if not client:
+        return json_response({"error": "Device catalog is unavailable"}, status=503)
+
     devices = list_device_catalog()
     if not include_inactive:
         devices = [device for device in devices if str(device.get("status") or "").lower() == "active"]

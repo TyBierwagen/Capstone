@@ -1,7 +1,10 @@
 from azure.data.tables import TableServiceClient
-import datetime, time, uuid
+import datetime, time, uuid, os
 
-CONN = "UseDevelopmentStorage=true"
+# Prefer an explicit storage connection string from the environment
+# (STORAGE_CONNECTION_STRING or AzureWebJobsStorage). Fall back to
+# the emulator for local development when not provided.
+CONN = os.getenv("STORAGE_CONNECTION_STRING") or os.getenv("AzureWebJobsStorage") or "UseDevelopmentStorage=true"
 svc = TableServiceClient.from_connection_string(CONN)
 
 def ensure_table(name):
