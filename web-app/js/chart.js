@@ -6,6 +6,69 @@ let tickFormatMode = '1h';
 
 // Remove date-fns guard — we don't rely on the adapter; use numeric linear axis instead
 
+// Normalize various timestamp formats returned by the API or sensors.
+// - Accepts numbers (ms or seconds) and ISO-like strings.
+// - Returns a number (ms since epoch) for numeric inputs, or a normalized string
+//   that `new Date()` can parse for ISO-like inputs.
+function sanitizeTs(ts) {
+  if (ts === null || ts === undefined) return null;
+  // If already a number, assume ms unless it's suspiciously small (seconds)
+  if (typeof ts === 'number') {
+    return (ts > 0 && ts < 1e12) ? (ts * 1000) : ts;
+  }
+  let v = String(ts).trim();
+  // Normalize common timezone variants
+  v = v.replace(/\+00:00Z$/, 'Z').replace(/\+00:00$/, 'Z');
+  // Pure digits may be epoch seconds or milliseconds; coerce to number and normalize
+  if (/^\d+$/.test(v)) {
+    const n = Number(v);
+    return (n > 0 && n < 1e12) ? (n * 1000) : n;
+  }
+  return v;
+}
+
+function parseTimestampMs(ts) {
+  const normalized = sanitizeTs(ts);
+  if (normalized === null || normalized === undefined) return NaN;
+  if (typeof normalized === 'number') return normalized;
+  const ms = new Date(normalized).getTime();
+  return Number.isNaN(ms) ? NaN : ms;
+}
+
+function getExpectedHistoryBounds(history, timescale) {
+  const validTimes = Array.isArray(history)
+    ? history.map((h) => parseTimestampMs(h?.timestamp)).filter((value) => Number.isFinite(value))
+    : [];
+
+  if (validTimes.length === 0) return null;
+
+  const maxObserved = Math.max(...validTimes);
+  const dayMs = 24 * 60 * 60 * 1000;
+
+  if (timescale === 'custom' && state.customDateRange?.start && state.customDateRange?.end) {
+    return {
+      min: state.customDateRange.start.getTime(),
+      max: state.customDateRange.end.getTime(),
+    };
+  }
+
+  if (timescale === '1m') {
+    return {
+      min: maxObserved - (35 * dayMs),
+      max: maxObserved + dayMs,
+    };
+  }
+
+  if (timescale === '1y') {
+    return {
+      min: maxObserved - (370 * dayMs),
+      max: maxObserved + dayMs,
+    };
+  }
+
+  return null;
+}
+
 function getAxisId(index) { return index === 0 ? 'y' : 'y' + index; }
 function getAxisPosition(index) { return (index % 2 === 0) ? 'right' : 'left'; }
 
@@ -20,9 +83,9 @@ function formatDateTimeTwoLine(value) {
     const timestamps = state.historyData
       .map(h => {
         try {
-          let ts = String(h.timestamp || '').trim();
-          ts = ts.replace(/\+00:00Z$/, 'Z').replace(/\+00:00$/, 'Z');
-          return new Date(ts).getTime();
+          const s = sanitizeTs(h.timestamp);
+          const tms = (typeof s === 'number') ? s : new Date(s).getTime();
+          return isNaN(tms) ? NaN : tms;
         } catch {
           return NaN;
         }
@@ -39,6 +102,8 @@ function formatDateTimeTwoLine(value) {
   
   const hour = String(d.getHours()).padStart(2, '0');
   const minute = String(d.getMinutes()).padStart(2, '0');
+  // Prefer month/day label for 1-month timescale or wide ranges
+  const rangeIsWide = (minDate && maxDate) ? ((maxDate.getTime() - minDate.getTime()) >= (14 * 24 * 60 * 60 * 1000)) : false;
   
   if (minDate && maxDate) {
     const minYear = minDate.getFullYear();
@@ -57,7 +122,7 @@ function formatDateTimeTwoLine(value) {
     }
     
     // Different months (same year): show month, day, time
-    if (minMonth !== maxMonth) {
+    if (minMonth !== maxMonth || rangeIsWide) {
       const month = String(d.getMonth() + 1).padStart(2, '0');
       const day = String(d.getDate()).padStart(2, '0');
       return `${month}/${day}\n${hour}:${minute}`;
@@ -74,12 +139,86 @@ function formatDateTimeTwoLine(value) {
   return `${hour}:${minute}`;
 }
 
+// Simple month/day formatter used for ticks and tooltips
+function formatMonthDay(ms) {
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return '';
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${month}/${day}`;
+}
+
+function formatMonthDayTime(ms) {
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return '';
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const hour = String(d.getHours()).padStart(2, '0');
+  const minute = String(d.getMinutes()).padStart(2, '0');
+  return `${month}/${day} ${hour}:${minute}`;
+}
+
+function isShortRange() {
+  const ts = state.lastTimescale || tickFormatMode;
+  if (!ts) return false;
+  if (ts === '1h' || ts === '1d') return true;
+  if (ts === 'custom' && state.customDateRange && state.customDateRange.start && state.customDateRange.end) {
+    const diff = state.customDateRange.end.getTime() - state.customDateRange.start.getTime();
+    return diff < (31 * 24 * 60 * 60 * 1000);
+  }
+  return false;
+}
+
+// Try to resolve a millisecond timestamp from Chart.js tick/tooltip value or index
+function toMsFromTick(value) {
+  const dayMs = 24 * 60 * 60 * 1000;
+  // Direct ms
+  if (typeof value === 'number' && value > 1e12) return value;
+  // If value is numeric but small, treat as index: try dataset point
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
+    try {
+      const ds = state.chart?.data?.datasets?.[0];
+      if (ds && Array.isArray(ds.data)) {
+        const p = ds.data[value];
+        if (p && typeof p.x === 'number') return p.x;
+      }
+    } catch (e) { /* ignore */ }
+  }
+  // If it's a label string, try parsing as ISO or numeric offset
+  if (typeof value === 'string' && value) {
+    const p = Date.parse(value);
+    if (!Number.isNaN(p)) return p;
+    const n = Number(value.trim());
+    if (!Number.isNaN(n)) {
+      const min = state.chart?.options?.scales?.x?.min;
+      if (typeof min === 'number' && Number.isFinite(min)) return min + Math.round(n) * dayMs;
+    }
+  }
+  return NaN;
+}
+
 function tooltipTitleFromTimestamp(items) {
   if (!Array.isArray(items) || items.length === 0) return '';
   const first = items[0];
-  const x = first?.parsed?.x ?? first?.raw?.x;
-  if (typeof x !== 'number') return '';
-  return formatDateTimeTwoLine(x);
+  // Prefer raw/parsed x, then dataset point, then labels
+  let ms = NaN;
+  ms = (first?.raw && typeof first.raw.x === 'number') ? first.raw.x : ms;
+  if (Number.isNaN(ms) && typeof first?.parsed?.x === 'number') ms = first.parsed.x;
+  if (Number.isNaN(ms) && Number.isInteger(first?.dataIndex)) {
+    try {
+      const ds = state.chart?.data?.datasets?.[first.datasetIndex];
+      const pt = ds?.data?.[first.dataIndex];
+      if (pt && typeof pt.x === 'number') ms = pt.x;
+    } catch (e) { /* ignore */ }
+  }
+  if (Number.isNaN(ms)) {
+    const lbl = state.chart?.data?.labels?.[first?.dataIndex];
+    const parsed = (typeof lbl === 'string') ? Date.parse(lbl) : NaN;
+    if (!Number.isNaN(parsed)) ms = parsed;
+    else if (typeof lbl === 'number') ms = lbl;
+  }
+  if (Number.isNaN(ms)) return '';
+  return isShortRange() ? formatMonthDayTime(Number(ms)) : formatMonthDay(Number(ms));
 }
 
 function csvEscape(value) {
@@ -208,10 +347,11 @@ export function normalizeAxes() {
     { axisColor: '#f87171', axisTitle: `Temp (${unitLabel})`, side: 'left' },
     { axisColor: '#fbbf24', axisTitle: 'Battery (V)', side: 'right' }
   ];
-  // Always ensure fresh date formatter for X axis
+  // Simple X-axis formatter: resolve ms then show MM/DD
   const dateFormatter = (value) => {
-    if (typeof value !== 'number') return '';
-    return formatDateTimeTwoLine(value);
+    const ms = toMsFromTick(value);
+    if (!Number.isFinite(ms)) return '';
+    return isShortRange() ? formatMonthDayTime(ms) : formatMonthDay(ms);
   };
   const scales = { x: { type: 'linear', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', callback: dateFormatter } } };
   let firstVisibleFound = false;
@@ -264,7 +404,19 @@ export function setAxisDisplayByDatasetIndex(index, visible) {
 export function updateChart(history, timescale = '1h') {
   try {
   if (!state.chart || !history) return;
-  state.historyData = history; state.lastTimescale = timescale; tickFormatMode = timescale;
+  const expectedBounds = getExpectedHistoryBounds(history, timescale);
+  const boundedHistory = Array.isArray(history)
+    ? history.filter((h) => {
+      const x = parseTimestampMs(h?.timestamp);
+      if (!Number.isFinite(x)) return false;
+      if (!expectedBounds) return true;
+      return x >= expectedBounds.min && x <= expectedBounds.max;
+    })
+    : [];
+  if (expectedBounds && boundedHistory.length !== history.length) {
+    console.warn('Filtered out-of-range history points', { input: history.length, kept: boundedHistory.length, timescale, bounds: expectedBounds });
+  }
+  state.historyData = boundedHistory; state.lastTimescale = timescale; tickFormatMode = timescale;
   ensureDatasetAxisMeta();
   syncVisibleOrderFromDatasets();
   const unitLabel = state.tempUnit === 'F' ? '°F' : '°C';
@@ -272,8 +424,9 @@ export function updateChart(history, timescale = '1h') {
   // Safety: apply a minimal safe options set before mutating scales/other options
   // Start with fresh options to avoid circular references from previous chart updates
   const dateFormatter = (value) => {
-    if (typeof value !== 'number') return '';
-    return formatDateTimeTwoLine(value);
+    const ms = toMsFromTick(value);
+    if (!Number.isFinite(ms)) return '';
+    return isShortRange() ? formatMonthDayTime(ms) : formatMonthDay(ms);
   };
   state.chart.options = {
     responsive: true,
@@ -289,7 +442,17 @@ export function updateChart(history, timescale = '1h') {
       y2: { type: 'linear', position: 'right', grid: { color: 'rgba(255,255,255,0.05)', drawOnChartArea: false }, ticks: { color: '#fbbf24' }, title: { display: true, text: 'Battery (V)', color: '#fbbf24' } }
     }
   };
-  const sorted = [...history].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+  // Sort by normalized millisecond timestamp to avoid string/seconds vs ms parsing bugs
+  const sorted = [...boundedHistory].slice().sort((a, b) => {
+    try {
+      const ma = parseTimestampMs(a?.timestamp);
+      const mb = parseTimestampMs(b?.timestamp);
+      if (Number.isNaN(ma) && Number.isNaN(mb)) return 0;
+      if (Number.isNaN(ma)) return 1;
+      if (Number.isNaN(mb)) return -1;
+      return ma - mb;
+    } catch (e) { return 0; }
+  });
   if (state.chart && state.chart.data && state.chart.data.datasets[0]) {
     state.chart.data.datasets[0].label = String(state.chart.data.datasets[0].label || 'Humidity (%)');
     state.chart.data.datasets[0].axisTitle = 'Humidity %';
@@ -305,13 +468,7 @@ export function updateChart(history, timescale = '1h') {
     state.chart.data.datasets[2].axisTitle = 'Battery (V)';
     state.chart.data.datasets[2].axisColor = '#fbbf24';
   }
-  // Sanitize timestamps to handle variants like '+00:00Z' or '+00:00' that some browsers parse inconsistently
-  const sanitizeTs = (ts) => {
-    if (!ts) return null;
-    let v = String(ts).trim();
-    v = v.replace(/\+00:00Z$/, 'Z').replace(/\+00:00$/, 'Z');
-    return v;
-  };
+  // Use top-level sanitizeTs helper for timestamp normalization
 
   // Build point arrays using timestamps (ms) so X spacing is linear with time
   const pointsHum = [];
@@ -392,11 +549,11 @@ export function updateChart(history, timescale = '1h') {
   }
 
   // Set explicit X axis bounds
-  const firstValid = sorted.find(h => !isNaN(new Date(sanitizeTs(h.timestamp)).getTime()));
-  const lastValid = [...sorted].reverse().find(h => !isNaN(new Date(sanitizeTs(h.timestamp)).getTime()));
+  const firstValid = sorted.find(h => Number.isFinite(parseTimestampMs(h.timestamp)));
+  const lastValid = [...sorted].reverse().find(h => Number.isFinite(parseTimestampMs(h.timestamp)));
   if (firstValid && lastValid) {
-    const min = new Date(sanitizeTs(firstValid.timestamp)).getTime();
-    const max = new Date(sanitizeTs(lastValid.timestamp)).getTime();
+    const min = parseTimestampMs(firstValid.timestamp);
+    const max = parseTimestampMs(lastValid.timestamp);
     state.chart.options.scales.x.min = min;
     state.chart.options.scales.x.max = max;
 

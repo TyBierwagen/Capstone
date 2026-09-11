@@ -205,8 +205,22 @@ def sanitize_timestamp(value):
     return None if not value else str(value)
 
 
-def json_response(payload: dict, status: int = 200) -> func.HttpResponse:
-    return func.HttpResponse(json.dumps(payload), status_code=status, mimetype="application/json")
+def timestamp_sort_key(value):
+    parsed = parse_timestamp_utc(value)
+    return parsed if parsed is not None else datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+
+
+def json_response(payload: dict, status: int = 200, headers: dict = None) -> func.HttpResponse:
+    h = headers.copy() if headers else {}
+    # Default CORS header may be overridden by caller; allow environment override.
+    origin = os.getenv("FRONTEND_ORIGIN") or "*"
+    if "Access-Control-Allow-Origin" not in h:
+        h["Access-Control-Allow-Origin"] = origin
+    if "Access-Control-Allow-Methods" not in h:
+        h["Access-Control-Allow-Methods"] = "GET, POST, PATCH, OPTIONS"
+    if "Access-Control-Allow-Headers" not in h:
+        h["Access-Control-Allow-Headers"] = "*"
+    return func.HttpResponse(json.dumps(payload), status_code=status, mimetype="application/json", headers=h)
 
 
 def safe_function(handler):
@@ -530,7 +544,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
     else:
         time_filter = None
 
-    rollup_map = {"1d": "hour", "1m": "day", "1y": "month", "all": "month"}
+    rollup_map = {"1d": "hour", "1m": "day", "1y": "week", "all": "month"}
 
     def fetch_rollup_history() -> Optional[list]:
         if raw or timescale not in rollup_map:
@@ -550,6 +564,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
                 q = f"{q} and timestamp ge '{since_str}'"
             try:
                 rollup_entities = list(rollup_client.query_entities(query_filter=q))
+                logging.info(f"Rollup query for device {device_ip} granularity={granularity}: found {len(rollup_entities)} entities (pk={pk}, query={q})")
             except Exception as ex:
                 logging.debug("Rollup partition query failed for %s: %s", pk, ex)
         else:
@@ -559,10 +574,12 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
                 q = f"{q} and timestamp ge '{since_str}'"
             try:
                 rollup_entities = list(rollup_client.query_entities(query_filter=q))
+                logging.info(f"Rollup query global granularity={granularity}: found {len(rollup_entities)} entities (query={q})")
             except Exception as ex:
                 logging.debug("Rollup global query failed for granularity=%s: %s", granularity, ex)
 
         if not rollup_entities:
+            logging.warning(f"No rollup entities found for timescale={timescale}, granularity={granularity}, device_ip={device_ip}")
             return None
 
         rows = []
@@ -570,7 +587,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
             ts = e.get('timestamp') or e.get('RowKey')
             if isinstance(ts, datetime.datetime):
                 ts = ts.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
-            rows.append({
+            row = {
                 'timestamp': sanitize_timestamp(ts) if ts else None,
                 'moisture': e.get('moisture'),
                 'temperature': e.get('temperature'),
@@ -580,9 +597,107 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
                 'battery': e.get('battery'),
                 'deviceIp': e.get('deviceIp'),
                 'isRollup': True,
-            })
+            }
+            logging.debug(f"Rollup entity: ts={ts}, parsed_ts={row['timestamp']}, granularity={e.get('granularity')}")
+            rows.append(row)
 
-        rows_sorted = sorted([r for r in rows if r.get('timestamp')], key=lambda x: str(x.get('timestamp')))
+        # Deduplicate rollup rows that share the same timestamp by averaging
+        # numeric fields. This prevents duplicate timestamp entries from
+        # appearing in production when multiple rollup entities exist for
+        # the same bucket.
+        grouped = {}
+        for r in rows:
+            ts = r.get('timestamp')
+            if not ts:
+                continue
+            g = grouped.get(ts)
+            if not g:
+                grouped[ts] = { 'count': 1, 'deviceIp': r.get('deviceIp'), 'timestamp': ts }
+                # accumulate sums for numeric keys
+                for k in ('moisture','temperature','humidity','battery','ph','light'):
+                    grouped[ts][f'sum_{k}'] = r.get(k) if isinstance(r.get(k),(int,float)) else 0.0
+                    grouped[ts][f'has_{k}'] = 1 if isinstance(r.get(k),(int,float)) else 0
+            else:
+                g = grouped[ts]
+                g['count'] += 1
+                if not g.get('deviceIp') and r.get('deviceIp'):
+                    g['deviceIp'] = r.get('deviceIp')
+                for k in ('moisture','temperature','humidity','battery','ph','light'):
+                    if isinstance(r.get(k),(int,float)):
+                        g[f'sum_{k}'] += r.get(k)
+                        g[f'has_{k}'] += 1
+
+        rows_deduped = []
+        for ts, g in grouped.items():
+            out = { 'timestamp': ts, 'deviceIp': g.get('deviceIp') }
+            for k in ('moisture','temperature','humidity','battery','ph','light'):
+                if g.get(f'has_{k}',0) > 0:
+                    out[k] = round(g.get(f'sum_{k}',0.0) / g.get(f'has_{k}'), 2)
+                else:
+                    out[k] = None
+            rows_deduped.append(out)
+
+        rows_sorted = sorted([r for r in rows_deduped if r.get('timestamp')], key=lambda x: timestamp_sort_key(x.get('timestamp')))
+        logging.info(f"Rollup rows after timestamp filtering: {len(rows_sorted)} valid rows (from {len(rows)} total, deduped={len(rows_deduped)})")
+        if rows_sorted:
+            logging.info(f"Rollup timestamp range: {rows_sorted[0]['timestamp']} to {rows_sorted[-1]['timestamp']}")
+
+        # For month-timescale (30 days) prefer a deterministic per-day average
+        # so the frontend always receives one point per day even when some
+        # rollup buckets are missing. This produces a stable 30-point series
+        # with ISO timestamps at UTC midnight for each day.
+        if granularity == 'day' and timescale == '1m':
+            try:
+                # Determine the start day (since) and produce 30 days
+                if since:
+                    start_dt = since
+                else:
+                    start_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30)
+                start_day = (start_dt.astimezone(datetime.timezone.utc).date())
+                daily = []
+                # Index available rollup rows by UTC date for fast lookup
+                idx = {}
+                for r in rows_sorted:
+                    parsed = parse_timestamp_utc(r.get('timestamp'))
+                    if not parsed:
+                        continue
+                    idx[parsed.date()] = r
+
+                for i in range(0, 30):
+                    day = start_day + datetime.timedelta(days=i)
+                    day_start = datetime.datetime.combine(day, datetime.time.min, tzinfo=datetime.timezone.utc)
+                    ts_iso = day_start.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+                    row = idx.get(day)
+                    if row:
+                        daily.append({
+                            'timestamp': sanitize_timestamp(row.get('timestamp') or ts_iso),
+                            'moisture': row.get('moisture'),
+                            'temperature': row.get('temperature'),
+                            'humidity': row.get('humidity'),
+                            'battery': row.get('battery'),
+                            'ph': row.get('ph'),
+                            'light': row.get('light'),
+                            'deviceIp': row.get('deviceIp'),
+                            'isRollup': True,
+                        })
+                    else:
+                        # Missing day -> emit placeholder with nulls so chart shows gaps
+                        daily.append({
+                            'timestamp': sanitize_timestamp(ts_iso),
+                            'moisture': None,
+                            'temperature': None,
+                            'humidity': None,
+                            'battery': None,
+                            'ph': None,
+                            'light': None,
+                            'deviceIp': device_ip,
+                            'isRollup': True,
+                        })
+
+                logging.debug(f"fetch_rollup_history returning {len(daily)} daily points for 1m timescale")
+                return daily[-limit:] if limit else daily
+            except Exception as ex:
+                logging.exception('Failed to build deterministic daily series for 1m rollups: %s', ex)
 
         # Keep rollup responses consistent with raw-data aggregation by
         # returning approximately `target_points` data points. This ensures
@@ -617,13 +732,16 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
                 'isAggregated': True,
             })
 
-        return aggregated[:target_points] if not limit else aggregated[-limit:]
+        result = aggregated[:target_points] if not limit else aggregated[-limit:]
+        logging.debug(f"fetch_rollup_history returning {len(result)} points (rolled up from {len(rows_sorted)}, limit={limit})")
+        return result
 
     # Use precomputed rollups first for the long-range views so we avoid
     # scanning raw SensorData when the answer is already materialized.
     if not start_timestamp and not end_timestamp and not raw:
         rollup_history = fetch_rollup_history()
         if rollup_history is not None:
+            logging.info(f"Returning {len(rollup_history)} rollup points for timescale={timescale}")
             return rollup_history
 
     entities = []
@@ -662,9 +780,10 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
         pass
         
     # Sort chronological
-    raw_history = sorted([dict(e) for e in entities], key=lambda x: str(x.get("timestamp", "")))
+    raw_history = sorted([dict(e) for e in entities], key=lambda x: timestamp_sort_key(x.get("timestamp")))
 
     # Ensure every entry has a timestamp string (fallback to Table's Timestamp value when present)
+    filtered_history = []
     for r in raw_history:
         if not r.get("timestamp"):
             ts_obj = r.get("Timestamp")
@@ -675,6 +794,9 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
         # Normalize timestamp formats to be parseable by the browser
         if r.get("timestamp"):
             r["timestamp"] = sanitize_timestamp(r.get("timestamp"))
+        if not parse_timestamp_utc(r.get("timestamp")):
+            logging.warning("Skipping row with unparseable timestamp: %r", r.get("timestamp"))
+            continue
         # Stabilize keys so frontend always sees the same payload shape.
         r.setdefault("humidity", None)
         r.setdefault("temperature", None)
@@ -682,26 +804,27 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
         r.setdefault("moisture", None)
         r.setdefault("ph", None)
         r.setdefault("light", None)
+        filtered_history.append(r)
 
     # If custom end_timestamp provided, filter to that as well
     if until:
-        raw_history = [r for r in raw_history if (parse_timestamp_utc(r.get("timestamp")) or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)) <= until]
+        filtered_history = [r for r in filtered_history if (parse_timestamp_utc(r.get("timestamp")) or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)) <= until]
 
     # If raw flag is set, return unaggregated data (for custom date-range queries)
     if raw:
-        logging.debug(f"Returning {len(raw_history)} raw data points (no aggregation)")
-        return raw_history[-limit:] if limit else raw_history
+        logging.debug(f"Returning {len(filtered_history)} raw data points (no aggregation)")
+        return filtered_history[-limit:] if limit else filtered_history
 
     # If we have too many points, aggregate them to ~60 points for the chart
     target_points = 60
-    if len(raw_history) <= target_points or timescale == "1h":
-        return raw_history[-limit:] if (timescale == "all" and limit) else raw_history
+    if len(filtered_history) <= target_points or timescale == "1h":
+        return filtered_history[-limit:] if (timescale == "all" and limit) else filtered_history
 
     # Simple bucket aggregation
-    chunk_size = len(raw_history) // target_points
+    chunk_size = len(filtered_history) // target_points
     aggregated = []
-    for i in range(0, len(raw_history), chunk_size):
-        chunk = raw_history[i:i + chunk_size]
+    for i in range(0, len(filtered_history), chunk_size):
+        chunk = filtered_history[i:i + chunk_size]
         if not chunk: continue
         
         def avg(key):
@@ -949,9 +1072,16 @@ def update_device_settings(req: func.HttpRequest) -> func.HttpResponse:
 
 
 @app.function_name("listDevices")
-@app.route(route="devices", methods=["GET"], auth_level=func.AuthLevel.FUNCTION)
+@app.route(route="devices", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@safe_function
 def list_devices(req: func.HttpRequest) -> func.HttpResponse:
     include_inactive = parse_bool(req.params.get("includeInactive"), True)
+    # If the table client is not configured, return a 503 so the frontend
+    # can show an explicit error instead of silently rendering an empty list.
+    client = get_table_client("Devices")
+    if not client:
+        return json_response({"error": "Device catalog is unavailable"}, status=503)
+
     devices = list_device_catalog()
     if not include_inactive:
         devices = [device for device in devices if str(device.get("status") or "").lower() == "active"]

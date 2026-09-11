@@ -81,6 +81,11 @@ def floor_to_bucket(timestamp: dt.datetime, granularity: str) -> dt.datetime:
         return timestamp.replace(minute=0, second=0)
     if granularity == "day":
         return timestamp.replace(hour=0, minute=0, second=0)
+    if granularity == "week":
+        # Floor to Monday of the week (weekday() returns 0=Monday, 6=Sunday)
+        days_since_monday = timestamp.weekday()
+        monday = timestamp - dt.timedelta(days=days_since_monday)
+        return monday.replace(hour=0, minute=0, second=0)
     if granularity == "month":
         return timestamp.replace(day=1, hour=0, minute=0, second=0)
     return timestamp
@@ -128,7 +133,7 @@ def build_rollups(source_rows: Iterable[Dict[str, Any]]) -> Dict[Tuple[str, str,
             continue
 
         device_ip = get_device_ip(row)
-        for granularity in ("hour", "day", "month"):
+        for granularity in ("hour", "day", "week", "month"):
             bucket_start = floor_to_bucket(timestamp, granularity)
             bucket_id = (device_ip, granularity, rollup_row_key(bucket_start))
             bucket = buckets.get(bucket_id)

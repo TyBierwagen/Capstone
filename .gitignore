@@ -12,6 +12,7 @@ microcontroller/soil_sensor.ino
 
 # Local settings for Azure Functions
 functions/local.settings.json
+functions/local.prod-settings.json
 
 # Local environment files
 .env

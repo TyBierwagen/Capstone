@@ -2,8 +2,9 @@ import { state } from './state.js';
 import { showAlert, addLogEntry, setLoading, updateSensorDisplay, updateDeviceInfo, renderDeviceManager } from './ui.js';
 import { updateChart, initChart } from './chart.js';
 
-const PROD_API_URL = 'https://soilrobot-apim-dev.azure-api.net/api';
-const LOCAL_API_URL = 'http://localhost:7071/api';
+const PROD_API_URL = 'https://soilrobot-func-dev.azurewebsites.net/api';
+// Local functions host (adjust port to match your running host)
+const LOCAL_API_URL = 'http://localhost:7070/api';
 
 function setChartLoadingOverlay(visible) {
   const chartContainer = document.querySelector('[style*="height: 300px"]');
@@ -20,7 +21,18 @@ function setChartLoadingOverlay(visible) {
   loader.style.display = visible ? 'flex' : 'none';
 }
 
-export function getApiBaseUrl() { return state.useProd ? PROD_API_URL : LOCAL_API_URL; }
+export function getApiBaseUrl() {
+  // Allow an explicit custom base URL (saved in localStorage) to override
+  // the usual production/local toggle. This lets users point the UI at
+  // alternate gateways (APIM, proxy, or function host) without changing code.
+  try {
+    const custom = (localStorage.getItem('customApiUrl') || '').trim();
+    if (custom) return custom.replace(/\/$/, '');
+  } catch (e) {
+    // ignore localStorage failures and fall back to configured defaults
+  }
+  return state.useProd ? PROD_API_URL : LOCAL_API_URL;
+}
 
 async function fetchHistoryByTimescale(baseUrl, params, fetchOptions, timescale, rawHistory = false) {
   const historyParams = new URLSearchParams(params);
@@ -500,7 +512,10 @@ export function updateConnectionStatus(connected) {
 
   const cachedDataNote = document.getElementById('cachedDataNote');
   if (cachedDataNote) {
-    cachedDataNote.style.display = connected ? 'none' : 'block';
+    // Only show the cached-data notice when we're disconnected AND we actually
+    // have cached chart data to display. This avoids briefly flashing the note
+    // when the UI toggles connection state during startup.
+    cachedDataNote.style.display = (!connected && hasCachedChartData()) ? 'block' : 'none';
   }
 }
 
