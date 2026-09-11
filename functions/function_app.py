@@ -5,7 +5,12 @@ import logging
 import os
 import re
 import uuid
+from csv import DictWriter
+from io import StringIO
 from typing import Optional, Any, Dict
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 from azure.data.tables import TableServiceClient, UpdateMode
 
 try:
@@ -221,6 +226,138 @@ def json_response(payload: dict, status: int = 200, headers: dict = None) -> fun
     if "Access-Control-Allow-Headers" not in h:
         h["Access-Control-Allow-Headers"] = "*"
     return func.HttpResponse(json.dumps(payload), status_code=status, mimetype="application/json", headers=h)
+
+
+def upstream_upload_config() -> dict[str, str]:
+    return {
+        "base_url": os.getenv("UPSTREAM_BASE_URL", "https://vitalapi.pods.portals.tapis.io").rstrip("/"),
+        "username": os.getenv("UPSTREAM_USERNAME", ""),
+        "password": os.getenv("UPSTREAM_PASSWORD", ""),
+        "campaign_id": os.getenv("UPSTREAM_CAMPAIGN_ID", "4"),
+        "station_id": os.getenv("UPSTREAM_STATION_ID", "3"),
+        "latitude": os.getenv("UPSTREAM_LATITUDE", ""),
+        "longitude": os.getenv("UPSTREAM_LONGITUDE", ""),
+    }
+
+
+def make_upstream_csvs(entry: dict[str, Any], config: dict[str, str]) -> tuple[str, str]:
+    sensor_fields = [
+        field.strip()
+        for field in os.getenv("UPSTREAM_SENSOR_FIELDS", "temperature,humidity,moisture,ph,light,battery").split(",")
+        if field.strip() and entry.get(field) is not None
+    ]
+    if not sensor_fields:
+        raise ValueError("Sensor entry has no values configured for Upstream upload")
+
+    units = {
+        "temperature": "Celsius",
+        "humidity": "Percentage",
+        "moisture": "Percentage",
+        "ph": "pH",
+        "light": "lux",
+        "battery": "Volts",
+    }
+    sensors_file = StringIO(newline="")
+    sensor_writer = DictWriter(
+        sensors_file,
+        fieldnames=["alias", "variablename", "units", "postprocess", "postprocessscript"],
+        lineterminator="\n",
+    )
+    sensor_writer.writeheader()
+    for field in sensor_fields:
+        sensor_writer.writerow({
+            "alias": field,
+            "variablename": field,
+            "units": units.get(field, ""),
+            "postprocess": "false",
+            "postprocessscript": "",
+        })
+
+    latitude = entry.get("latitude") or entry.get("Lat_deg") or config["latitude"]
+    longitude = entry.get("longitude") or entry.get("Lon_deg") or config["longitude"]
+    if latitude == "" or longitude == "":
+        raise ValueError("UPSTREAM_LATITUDE and UPSTREAM_LONGITUDE are required")
+
+    measurements_file = StringIO(newline="")
+    measurement_fields = ["collectiontime", "Lat_deg", "Lon_deg", *sensor_fields]
+    measurement_writer = DictWriter(measurements_file, fieldnames=measurement_fields, lineterminator="\n")
+    measurement_writer.writeheader()
+    measurement_writer.writerow({
+        "collectiontime": entry["timestamp"],
+        "Lat_deg": latitude,
+        "Lon_deg": longitude,
+        **{field: entry.get(field) for field in sensor_fields},
+    })
+    return sensors_file.getvalue(), measurements_file.getvalue()
+
+
+def upload_entry_to_upstream(entry: dict[str, Any]) -> None:
+    config = upstream_upload_config()
+    missing = [key for key in ("username", "password") if not config[key]]
+    if missing:
+        raise ValueError(f"Missing Upstream configuration: {', '.join(missing)}")
+
+    token_request = Request(
+        f"{config['base_url']}/api/v1/token",
+        data=urlencode({
+            "grant_type": "password",
+            "username": config["username"],
+            "password": config["password"],
+        }).encode("utf-8"),
+        headers={"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urlopen(token_request, timeout=30) as response:
+            token_response = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError) as error:
+        raise RuntimeError(f"Upstream authentication failed: {error}") from error
+
+    access_token = token_response.get("access_token")
+    token_type = token_response.get("token_type", "Bearer")
+    if not access_token:
+        raise RuntimeError("Upstream authentication response did not contain an access token")
+
+    sensors_csv, measurements_csv = make_upstream_csvs(entry, config)
+    boundary = f"----AzureUpstream{uuid.uuid4().hex}"
+
+    def file_part(name: str, filename: str, content: str) -> bytes:
+        return (
+            f"--{boundary}\r\n"
+            f"Content-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\n"
+            "Content-Type: text/csv; charset=utf-8\r\n\r\n"
+            f"{content}\r\n"
+        ).encode("utf-8")
+
+    body = (
+        file_part("upload_file_sensors", "sensors.csv", sensors_csv)
+        + file_part("upload_file_measurements", "measurements.csv", measurements_csv)
+        + f"--{boundary}--\r\n".encode("utf-8")
+    )
+    upload_url = (
+        f"{config['base_url']}/api/v1/uploadfile_csv/"
+        f"campaign/{config['campaign_id']}/station/{config['station_id']}/sensor"
+    )
+    upload_request = Request(
+        upload_url,
+        data=body,
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"{token_type} {access_token}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(upload_request, timeout=60) as response:
+            response.read()
+    except (HTTPError, URLError) as error:
+        raise RuntimeError(f"Upstream data upload failed: {error}") from error
+
+
+def enqueue_upstream_upload(output: Optional[func.Out[str]], entry: dict[str, Any]) -> None:
+    if output is not None:
+        output.set(json.dumps(entry, default=str))
 
 
 def safe_function(handler):
