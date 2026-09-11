@@ -1251,8 +1251,8 @@ def check_device_health(myTimer: func.TimerRequest) -> None:
                 continue
             diff = (now - last_seen).total_seconds()
             
-            # If offline for more than 10 minutes (600 seconds)
-            if diff > 600:
+            # If offline for more than 2 hours (7200 seconds)
+            if diff > 7200:
                 # Check if we've already sent an alert in the last 24 hours to avoid spamming
                 last_alert = device.get("lastAlertSentAt")
                 should_alert = True
