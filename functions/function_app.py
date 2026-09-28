@@ -26,6 +26,16 @@ from functools import wraps
 
 app = func.FunctionApp()
 
+UPSTREAM_CAMPAIGN_ID = "4"
+UPSTREAM_STATION_ID = "3"
+UPSTREAM_DEFAULT_LATITUDE = "30.665742"
+UPSTREAM_DEFAULT_LONGITUDE = "-96.326784"
+UPSTREAM_UPLOAD_FIELDS = {
+    "temperature": "Celsius",
+    "humidity": "Percentage",
+    "battery": "Volts",
+}
+
 # Storage Configuration
 conn_str = os.getenv("STORAGE_CONNECTION_STRING") or os.getenv("AzureWebJobsStorage")
 try:
@@ -233,18 +243,18 @@ def upstream_upload_config() -> dict[str, str]:
         "base_url": os.getenv("UPSTREAM_BASE_URL", "https://vitalapi.pods.portals.tapis.io").rstrip("/"),
         "username": os.getenv("UPSTREAM_USERNAME", ""),
         "password": os.getenv("UPSTREAM_PASSWORD", ""),
-        "campaign_id": os.getenv("UPSTREAM_CAMPAIGN_ID", "4"),
-        "station_id": os.getenv("UPSTREAM_STATION_ID", "3"),
-        "latitude": os.getenv("UPSTREAM_LATITUDE", ""),
-        "longitude": os.getenv("UPSTREAM_LONGITUDE", ""),
+        "campaign_id": UPSTREAM_CAMPAIGN_ID,
+        "station_id": UPSTREAM_STATION_ID,
+        "latitude": os.getenv("UPSTREAM_LATITUDE", UPSTREAM_DEFAULT_LATITUDE),
+        "longitude": os.getenv("UPSTREAM_LONGITUDE", UPSTREAM_DEFAULT_LONGITUDE),
     }
 
 
 def make_upstream_csvs(entry: dict[str, Any], config: dict[str, str]) -> tuple[str, str]:
     sensor_fields = [
         field.strip()
-        for field in os.getenv("UPSTREAM_SENSOR_FIELDS", "temperature,humidity,moisture,ph,light,battery").split(",")
-        if field.strip() and entry.get(field) is not None
+        for field in os.getenv("UPSTREAM_SENSOR_FIELDS", "temperature,humidity,battery").split(",")
+        if field.strip() in UPSTREAM_UPLOAD_FIELDS and entry.get(field) is not None
     ]
     if not sensor_fields:
         raise ValueError("Sensor entry has no values configured for Upstream upload")
@@ -252,9 +262,6 @@ def make_upstream_csvs(entry: dict[str, Any], config: dict[str, str]) -> tuple[s
     units = {
         "temperature": "Celsius",
         "humidity": "Percentage",
-        "moisture": "Percentage",
-        "ph": "pH",
-        "light": "lux",
         "battery": "Volts",
     }
     sensors_file = StringIO(newline="")
@@ -362,9 +369,9 @@ def enqueue_upstream_upload(output: Optional[func.Out[str]], entry: dict[str, An
 
 def safe_function(handler):
     @wraps(handler)
-    def wrapper(req: func.HttpRequest):
+    def wrapper(req: func.HttpRequest, *args, **kwargs):
         try:
-            return handler(req)
+            return handler(req, *args, **kwargs)
         except Exception as ex:
             logging.exception("Unhandled exception in function %s", handler.__name__)
             return json_response({"error": "Internal server error", "details": str(ex)}, status=500)
@@ -507,6 +514,8 @@ def store_sensor_entry(payload: dict) -> dict:
         "deviceId": payload.get("deviceId"),
         "commandStatus": payload.get("commandStatus"),
         "timestamp": timestamp,
+        "latitude": payload.get("latitude") or payload.get("Lat_deg") or payload.get("lat"),
+        "longitude": payload.get("longitude") or payload.get("Lon_deg") or payload.get("lon"),
         # Date breakdown fields for easier table inspection
         "year": now.year,
         "month": now.month,
@@ -515,9 +524,6 @@ def store_sensor_entry(payload: dict) -> dict:
         "humidity": payload.get("humidity"),
         "temperature": payload.get("temperature"),
         "battery": battery_value,
-        "moisture": payload.get("moisture"),
-        "ph": payload.get("ph"),
-        "light": payload.get("light"),
     }
 
     logging.info("Sensor entry to store: %s", json.dumps(entry, default=str))
@@ -1038,8 +1044,9 @@ def register_device(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.function_name("postSensorData")
 @app.route(route="sensor-data", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
+@app.queue_output(arg_name="upstream_upload", queue_name="upstream-upload", connection="AzureWebJobsStorage")
 @safe_function
-def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
+def save_sensor_data(req: func.HttpRequest, upstream_upload: func.Out[str] = None) -> func.HttpResponse:
     logging.info("Saving sensor data")
 
     try:
@@ -1066,6 +1073,7 @@ def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
         return json_response({"error": "Device IP is required"}, status=400)
 
     entry = store_sensor_entry(payload)
+    enqueue_upstream_upload(upstream_upload, entry)
 
     # Battery low alert: if battery present and numeric < 3.3V, send alert.
     try:
@@ -1121,6 +1129,14 @@ def save_sensor_data(req: func.HttpRequest) -> func.HttpResponse:
         logging.exception("Battery alert check failed: %s", e)
 
     return json_response({"message": "Sensor data stored", "data": entry}, status=201)
+
+
+@app.function_name("syncSensorDataToUpstream")
+@app.queue_trigger(arg_name="upstream_upload", queue_name="upstream-upload", connection="AzureWebJobsStorage")
+def sync_sensor_data_to_upstream(upstream_upload: func.QueueMessage) -> None:
+    entry = json.loads(upstream_upload.get_body().decode("utf-8"))
+    upload_entry_to_upstream(entry)
+    logging.info("Uploaded sensor reading to Upstream for device %s", entry.get("deviceIp", "unknown"))
 
 
 @app.function_name("getSensorData")

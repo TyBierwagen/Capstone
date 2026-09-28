@@ -159,6 +159,41 @@ Recommended safe mode (no table delete):
 python scripts/backfill_rollups.py --keep-existing
 ```
 
+### Uploading Historical Data to Upstream
+
+Historical rows in Azure Table Storage can be replayed with the upload tool. It reads
+`SensorData`, uploads only temperature, humidity, and battery values, and sends rows in
+batches to the fixed `VITAL_STAKE_CAPSULE_TEST` campaign and `STEVENSON_TEST_BOX`
+station (campaign `4`, station `3`).
+Rows without coordinates use latitude `30.665742` and longitude `-96.326784`.
+Uploads use batches of 500 rows by default and retry transient `502`, `503`, and `504`
+responses up to three times with backoff. A gateway failure can be ambiguous if Upstream
+accepted the request before returning the error; check the destination before manually
+replaying a failed batch.
+
+Validate a small sample before uploading:
+
+```bash
+python scripts/upload_history_to_upstream.py --device-ip 192.168.1.33 --limit 10 --dry-run
+```
+
+Upload a time range after validation:
+
+```bash
+python scripts/upload_history_to_upstream.py \
+   --device-ip 192.168.1.33 \
+   --start 2025-01-01T00:00:00Z \
+   --end 2025-02-01T00:00:00Z \
+   --batch-size 500
+```
+
+The tool loads `functions/local.settings.json` when present, while existing environment
+variables take precedence. Set `STORAGE_CONNECTION_STRING` (or `AzureWebJobsStorage`),
+`UPSTREAM_USERNAME`, and `UPSTREAM_PASSWORD` before running it. After each successful
+batch, source row keys are recorded in the Azure `UpstreamUploadLedger` table, and later
+runs skip those rows. If a network failure occurs after Upstream accepts a request but
+before the client receives the response, verify Upstream before retrying that batch.
+
 ### Rollup Troubleshooting (1m slow, 1y fast)
 
 If `timescale=1m` is still slow while `timescale=1y` is fast, the API is usually falling back to raw `SensorData` scans because `day` rollups are missing for the target device.

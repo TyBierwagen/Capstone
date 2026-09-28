@@ -1,3 +1,5 @@
+# Local Azure validation state
+.azure/validate-status.json
 # Terraform files
 *.tfstate
 *.tfstate.*
@@ -9,6 +11,7 @@ override.tf.json
 microcontroller/mcu.ino
 microcontroller/mcu_test.ino
 microcontroller/soil_sensor.ino
+microcontroller/mcu/
 
 # Local settings for Azure Functions
 functions/local.settings.json

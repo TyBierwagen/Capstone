@@ -41,9 +41,6 @@ def make_sensor_entity(device_ip: str, device_id: str, ts: datetime) -> dict:
     else:
         batt = 20 + 40 * (0.5 + 0.5 * sin(2 * pi * (day_frac + 0.1))) + random.uniform(-1.5, 1.5)
     batt = max(0, min(100, batt))
-    moisture = max(0, min(100, 40 + 10 * sin(2 * pi * (day_frac - 0.2)) + random.uniform(-3, 3)))
-    ph = round(6.5 + 0.5 * sin(2 * pi * (day_frac + 0.25)) + random.uniform(-0.1, 0.1), 2)
-    light = max(0, int(800 * max(0, sin(2 * pi * (day_frac - 0.25))) + random.gauss(0, 20)))
 
     entity = {
         'PartitionKey': ip_to_rowkey(device_ip),
@@ -58,9 +55,6 @@ def make_sensor_entity(device_ip: str, device_id: str, ts: datetime) -> dict:
         'humidity': round(hum, 2),
         'temperature': round(temp, 2),
         'battery': round(batt, 2),
-        'moisture': round(moisture, 2),
-        'ph': ph,
-        'light': int(light),
     }
     return entity
 

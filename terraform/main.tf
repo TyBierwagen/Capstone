@@ -409,6 +409,10 @@ resource "azurerm_linux_function_app" "main" {
     ACS_CONNECTION_STRING = azurerm_key_vault_secret.acs_connection.value
     # Verified sender email for ACS (set this to a verified address after deploy if using email)
     ACS_SENDER_EMAIL = var.acs_sender_email
+    UPSTREAM_BASE_URL = "https://vitalapi.pods.portals.tapis.io"
+    UPSTREAM_CAMPAIGN_ID = "4"
+    UPSTREAM_STATION_ID = "3"
+    UPSTREAM_SENSOR_FIELDS = "temperature,humidity,battery"
   }
 
   lifecycle {
