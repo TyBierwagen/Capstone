@@ -506,6 +506,20 @@ def store_sensor_entry(payload: dict) -> dict:
         payload.get("voltage"),
         battery_value,
     )
+
+    def is_missing_temp(value):
+        return value is None or (isinstance(value, str) and not value.strip())
+
+    battery_temp_value = payload.get("batteryTemperature")
+    if is_missing_temp(battery_temp_value):
+        battery_temp_value = payload.get("batteryTemp")
+    if is_missing_temp(battery_temp_value):
+        battery_temp_value = payload.get("battery_temperature")
+    if is_missing_temp(battery_temp_value):
+        battery_temp_value = payload.get("batteryTemperatureC")
+
+    if is_missing_temp(battery_temp_value):
+        battery_temp_value = None
     
     entry = {
         "PartitionKey": device_ip.replace(".", "_"),
@@ -524,6 +538,7 @@ def store_sensor_entry(payload: dict) -> dict:
         "humidity": payload.get("humidity"),
         "temperature": payload.get("temperature"),
         "battery": battery_value,
+        "batteryTemperature": battery_temp_value,
     }
 
     logging.info("Sensor entry to store: %s", json.dumps(entry, default=str))
@@ -606,6 +621,7 @@ def fetch_latest_sensor_entry(device_ip: Optional[str] = None, device_id: Option
 
     # Keep response schema stable for frontend rendering.
     latest.setdefault("battery", None)
+    latest.setdefault("batteryTemperature", None)
 
     # Get device info
     device_client = get_table_client("Devices")
@@ -738,6 +754,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
                 'ph': e.get('ph'),
                 'light': e.get('light'),
                 'battery': e.get('battery'),
+                'batteryTemperature': e.get('batteryTemperature'),
                 'deviceIp': e.get('deviceIp'),
                 'isRollup': True,
             }
@@ -757,7 +774,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
             if not g:
                 grouped[ts] = { 'count': 1, 'deviceIp': r.get('deviceIp'), 'timestamp': ts }
                 # accumulate sums for numeric keys
-                for k in ('moisture','temperature','humidity','battery','ph','light'):
+                for k in ('moisture','temperature','humidity','battery','batteryTemperature','ph','light'):
                     grouped[ts][f'sum_{k}'] = r.get(k) if isinstance(r.get(k),(int,float)) else 0.0
                     grouped[ts][f'has_{k}'] = 1 if isinstance(r.get(k),(int,float)) else 0
             else:
@@ -765,7 +782,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
                 g['count'] += 1
                 if not g.get('deviceIp') and r.get('deviceIp'):
                     g['deviceIp'] = r.get('deviceIp')
-                for k in ('moisture','temperature','humidity','battery','ph','light'):
+                for k in ('moisture','temperature','humidity','battery','batteryTemperature','ph','light'):
                     if isinstance(r.get(k),(int,float)):
                         g[f'sum_{k}'] += r.get(k)
                         g[f'has_{k}'] += 1
@@ -773,7 +790,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
         rows_deduped = []
         for ts, g in grouped.items():
             out = { 'timestamp': ts, 'deviceIp': g.get('deviceIp') }
-            for k in ('moisture','temperature','humidity','battery','ph','light'):
+            for k in ('moisture','temperature','humidity','battery','batteryTemperature','ph','light'):
                 if g.get(f'has_{k}',0) > 0:
                     out[k] = round(g.get(f'sum_{k}',0.0) / g.get(f'has_{k}'), 2)
                 else:
@@ -818,6 +835,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
                             'temperature': row.get('temperature'),
                             'humidity': row.get('humidity'),
                             'battery': row.get('battery'),
+                            'batteryTemperature': row.get('batteryTemperature'),
                             'ph': row.get('ph'),
                             'light': row.get('light'),
                             'deviceIp': row.get('deviceIp'),
@@ -831,6 +849,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
                             'temperature': None,
                             'humidity': None,
                             'battery': None,
+                            'batteryTemperature': None,
                             'ph': None,
                             'light': None,
                             'deviceIp': device_ip,
@@ -869,6 +888,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
                 'temperature': avg('temperature'),
                 'humidity': avg('humidity'),
                 'battery': avg('battery'),
+                'batteryTemperature': avg('batteryTemperature'),
                 'ph': avg('ph'),
                 'light': avg('light'),
                 'deviceIp': chunk[0].get('deviceIp'),
@@ -944,6 +964,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
         r.setdefault("humidity", None)
         r.setdefault("temperature", None)
         r.setdefault("battery", None)
+        r.setdefault("batteryTemperature", None)
         r.setdefault("moisture", None)
         r.setdefault("ph", None)
         r.setdefault("light", None)
@@ -980,6 +1001,7 @@ def fetch_sensor_history(device_ip: Optional[str] = None, timescale: str = "1h",
             "temperature": avg("temperature"),
             "humidity": avg("humidity"),
             "battery": avg("battery"),
+            "batteryTemperature": avg("batteryTemperature"),
             "ph": avg("ph"),
             "light": avg("light"),
             "deviceIp": chunk[0].get("deviceIp"),

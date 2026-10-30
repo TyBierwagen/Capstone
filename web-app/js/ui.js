@@ -56,6 +56,13 @@ export function updateSensorDisplay(payload) {
 
   updateValueIfIdExists('humidity', formatValue(payload.humidity, 1));
   updateValueIfIdExists('battery', formatValue(payload.battery, 2));
+  const batteryTempRaw = payload.batteryTemperature;
+  const batteryTempValue = (state.tempUnit === 'F' && batteryTempRaw !== null && batteryTempRaw !== undefined)
+    ? (batteryTempRaw * 9 / 5) + 32
+    : batteryTempRaw;
+  updateValueIfIdExists('batteryTemperature', formatValue(batteryTempValue, 1));
+  const batteryTempUnitEl = document.getElementById('batteryTemperatureUnit');
+  if (batteryTempUnitEl) batteryTempUnitEl.textContent = state.tempUnit === 'F' ? '°F' : '°C';
   updateValueIfIdExists('ph', formatValue(payload.ph, 2));
   updateValueIfIdExists('light', payload.light ?? '--');
   
